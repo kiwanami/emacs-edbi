@@ -5,8 +5,6 @@
 
 ;; connect
 (edbi:connect conn1 '("dbi:SQLite:dbname=./test.sqlite" "" ""))
-(edbi:connect conn1 '("dbi:SQLite:dbname=/home/sakurai/nwork/jobs/ari/photoz/web/photoz.db" "" ""))
-(edbi:connect conn1 '("dbi:SQLite:dbname=./test.sqlite" "" ""))
 
 ;; select
 (ctbl:popup-table-buffer-easy
