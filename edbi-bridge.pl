@@ -137,6 +137,7 @@ sub edbi_primary_key_info {
   my ($args) = @_;
   my ($catalog, $schema, $table) = @$args;
   $sth = $dbh->primary_key_info( $catalog, $schema, $table );
+  return undef unless $sth;
   return [$sth->{NAME}, $sth->fetchall_arrayref()];
 }
 
