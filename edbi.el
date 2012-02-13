@@ -399,9 +399,12 @@ CONNECTION-INFO is a list of (data_source username auth)."
   (with-current-buffer (get-buffer-create edbi:dbview-buffer-name)
     (let (buffer-read-only)
       (erase-buffer)
+      (set (make-local-variable 'edbi:data-source) data-source)
+      (set (make-local-variable 'edbi:connection) conn)
       (insert (edbi:dbview-header data-source)
-              "\n[connecting...]"))
-    (pop-to-buffer (current-buffer)))
+              "\n[connecting...]")))
+  (unless (equal edbi:dbview-buffer-name (buffer-name))
+    (pop-to-buffer edbi:dbview-buffer-name))
   (lexical-let ((data-source data-source) (conn conn) results)
     (edbi:seq
      (results <- (edbi:table-info-d conn nil nil nil nil))
@@ -411,18 +414,26 @@ CONNECTION-INFO is a list of (data_source username auth)."
 (defun edbi:dbview-create-buffer (data-source conn results)
   "[internal] "
   (let* ((buf (get-buffer-create edbi:dbview-buffer-name))
-         (header-row (and results (car results)))
+         (hrow (and results (car results)))
          (rows (and results (cadr results)))
-         (data (loop for row in rows
-                     for (catalog schema table type remarks sql) = row
+         (data (loop with catalog-f = (edbi:column-selector hrow "TABLE_CAT")
+                     with schema-f  = (edbi:column-selector hrow "TABLE_SCHEM")
+                     with table-f   = (edbi:column-selector hrow "TABLE_NAME")
+                     with type-f    = (edbi:column-selector hrow "TABLE_TYPE")
+                     with remarks-f = (edbi:column-selector hrow "REMARKS")
+                     for row in rows
+                     for catalog = (funcall catalog-f row)
+                     for schema  = (funcall schema-f row)
+                     for type    = (funcall type-f row)
+                     for table   = (funcall table-f row)
+                     for remarks = (funcall remarks-f row)
                      unless (string-match "\\(INDEX\\|SYSTEM\\)" type)
                      collect
-                     (list (concat catalog schema) table type row))) table-cp)
+                     (list (concat catalog schema) table type remarks
+                           (list catalog schema table)))) table-cp)
     (with-current-buffer buf
       (let (buffer-read-only)
         (erase-buffer)
-        (set (make-local-variable 'edbi:data-source) data-source)
-        (set (make-local-variable 'edbi:connection) conn)
         (insert (edbi:dbview-header data-source data))
         (setq table-cp 
               (ctbl:create-table-component-region
@@ -431,7 +442,8 @@ CONNECTION-INFO is a list of (data_source username auth)."
                 :column-model
                 (list (make-ctbl:cmodel :title "Schema"    :align 'left)
                       (make-ctbl:cmodel :title "Table Name" :align 'left)
-                      (make-ctbl:cmodel :title "Type"  :align 'center))
+                      (make-ctbl:cmodel :title "Type"  :align 'center)
+                      (make-ctbl:cmodel :title "Remarks"  :align 'left))
                 :data data
                 :sort-state '(1 2))
                :keymap edbi:dbview-keymap))
@@ -456,16 +468,17 @@ CONNECTION-INFO is a list of (data_source username auth)."
        (kill-buffer (current-buffer))))))
 
 (defun edbi:dbview-update-command ()
-  (interactive) ;; TODO update from DB connection
-  (edbi:dbview-with-cp
-   (ctbl:cp-update cp)))
+  (interactive)
+  (let ((conn edbi:connection) (ds edbi:data-source))
+    (when conn
+      (edbi:dbview-open ds conn))))
 
 (defun edbi:dbview-show-table-definition-command ()
   (interactive)
   (let ((conn edbi:connection) (ds edbi:data-source))
     (when conn
       (edbi:dbview-with-cp
-       (destructuring-bind (catalog schema table type remarks sql) table
+       (destructuring-bind (catalog schema table) table
          (edbi:dbview-table-definition-open
           ds conn catalog schema table))))))
 
@@ -484,8 +497,6 @@ CONNECTION-INFO is a list of (data_source username auth)."
    ctbl:table-mode-map
    '(
      ("g"   . edbi:dbview-table-definition-update-command)
-     ("SPC" . edbi:dbview-table-show-column-definition-command)
-     ("C-m" . edbi:dbview-table-show-column-definition-command)
      ("q"   . edbi:dbview-table-definition-quit-command)
      )) "Keymap for the DB Table Viewer buffer.")
 
@@ -499,13 +510,17 @@ CONNECTION-INFO is a list of (data_source username auth)."
 
 (defun edbi:dbview-table-definition-open (data-source conn catalog schema table)
   "[internal] "
-  (with-current-buffer (get-buffer-create edbi:dbview-table-buffer-name)
+  (with-current-buffer
+      (get-buffer-create edbi:dbview-table-buffer-name)
     (let (buffer-read-only)
       (erase-buffer)
-      ;; header
+      (set (make-local-variable 'edbi:before-win-num) (length (window-list)))
+      (set (make-local-variable 'edbi:table-definition)
+           (list data-source conn catalog schema table))
       (insert (edbi:dbview-table-definition-header data-source table)
-              "[connecting...]\n"))
-    (pop-to-buffer (current-buffer)))
+              "[connecting...]\n")))
+  (unless (equal (buffer-name) edbi:dbview-table-buffer-name)
+    (pop-to-buffer edbi:dbview-table-buffer-name))
   (lexical-let ((data-source data-source) (conn conn) 
                 (catalog catalog) (schema schema) (table table)
                 column-info pkey-info index-info)
@@ -518,18 +533,24 @@ CONNECTION-INFO is a list of (data_source username auth)."
         data-source conn table
         column-info pkey-info index-info)))))
 
-(defun edbi:dbview-table-definition-get-pkey-info (pkey-rows column-name)
+(defun edbi:dbview-table-definition-get-pkey-info (pkey-info column-name)
   "[internal] "
-  (loop for row in pkey-rows
-        for (cat sch tbl cname keyseq pkname) = row
+  (loop with pkey-hrow = (car pkey-info)
+        with pkey-rows = (cadr pkey-info)
+        with pkname-f = (edbi:column-selector pkey-hrow "PK_NAME")
+        with keyseq-f = (edbi:column-selector pkey-hrow "KEY_SEQ")
+        with cname-f = (edbi:column-selector pkey-hrow "COLUMN_NAME")
+        for row in pkey-rows
+        for cname = (funcall cname-f row)
         if (equal column-name cname)
-        return (format "%s %s" pkname keyseq)
+        return (format "%s %s" 
+                       (funcall pkname-f row)
+                       (funcall keyseq-f row))
         finally return ""))
 
 (defun edbi:dbview-table-definition-create-buffer (data-source conn table-name column-info pkey-info index-info)
   "[internal] "
   (let* ((buf (get-buffer-create edbi:dbview-table-buffer-name))
-         (pkey-rows (and pkey-info (cadr pkey-info)))
          (hrow (and column-info (car column-info)))
          (rows (and column-info (cadr column-info)))
          (data
@@ -537,22 +558,22 @@ CONNECTION-INFO is a list of (data_source username auth)."
                 with type-name-f   = (edbi:column-selector hrow "TYPE_NAME")
                 with column-size-f = (edbi:column-selector hrow "COLUMN_SIZE")
                 with nullable-f    = (edbi:column-selector hrow "NULLABLE")
+                with remarks-f     = (edbi:column-selector hrow "REMARKS")
                 for row in rows
                 for column-name = (funcall column-name-f row)
                 for type-name   = (funcall type-name-f row)
                 for column-size = (funcall column-size-f row)
                 for nullable    = (funcall nullable-f row)
+                for remarks     = (funcall remarks-f row)
                 collect
                 (list column-name type-name 
                       (or column-size "")
-                      (edbi:dbview-table-definition-get-pkey-info pkey-rows column-name)
-                      (if (equal nullable 0) "NOT NULL" "")
+                      (edbi:dbview-table-definition-get-pkey-info pkey-info column-name)
+                      (if (equal nullable 0) "NOT NULL" "") remarks
                       row))) table-cp)
     (with-current-buffer buf
       (let (buffer-read-only)
         (erase-buffer)
-        (set (make-local-variable 'edbi:data-source) data-source)
-        (set (make-local-variable 'edbi:connection) conn)
         ;; header
         (insert (edbi:dbview-table-definition-header data-source table-name data))
         ;; table
@@ -562,10 +583,11 @@ CONNECTION-INFO is a list of (data_source username auth)."
                (make-ctbl:model
                 :column-model
                 (list (make-ctbl:cmodel :title "Column Name" :align 'left)
-                      (make-ctbl:cmodel :title "Type" :align 'left)
-                      (make-ctbl:cmodel :title "Size" :align 'right)
-                      (make-ctbl:cmodel :title "PKey" :align 'left)
-                      (make-ctbl:cmodel :title "Null" :align 'left))
+                      (make-ctbl:cmodel :title "Type"    :align 'left)
+                      (make-ctbl:cmodel :title "Size"    :align 'right)
+                      (make-ctbl:cmodel :title "PKey"    :align 'left)
+                      (make-ctbl:cmodel :title "Null"    :align 'left)
+                      (make-ctbl:cmodel :title "Remarks" :align 'left))
                 :data data
                 :sort-state nil)
                :keymap edbi:dbview-table-keymap))
@@ -575,9 +597,8 @@ CONNECTION-INFO is a list of (data_source username auth)."
             (insert "\n"
                     (propertize (format "[Index: %s]\n" (length index-rows))
                                 'face 'edbi:face-header))
-            (loop for row in index-rows
-                  for (catalog schema table type remarks sql) = row
-                  do (insert (format "- %s\n" sql)))))
+            (loop for row in index-rows ; maybe index column (sqlite)
+                  do (insert (format "- %s\n" (nth 5 row))))))
 
         (goto-char (point-min))
         (ctbl:cp-set-selected-cell table-cp '(0 . 0)))
@@ -586,12 +607,18 @@ CONNECTION-INFO is a list of (data_source username auth)."
 
 (defun edbi:dbview-table-definition-quit-command ()
   (interactive)
-  (kill-buffer (current-buffer)))
+  (let ((cbuf (current-buffer))
+        (win-num (length (window-list))))
+    (when (and (not (one-window-p))
+               (> win-num edbi:before-win-num))
+      (delete-window))
+    (kill-buffer cbuf)))
 
 (defun edbi:dbview-table-definition-update-command ()
-  (interactive) ;; TODO update from DB connection
-  (edbi:dbview-with-cp
-   (ctbl:cp-update cp)))
+  (interactive)
+  (let ((args edbi:table-definition))
+    (when args
+      (apply 'edbi:dbview-table-definition-open args))))
 
 (provide 'edbi)
 ;;; edbi.el ends here
