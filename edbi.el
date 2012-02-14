@@ -29,8 +29,22 @@
 (require 'epc)
 (require 'sql)
 
-;; deferred macro
+;;; Configurations
+
+(defvar edbi:driver-libpath (file-name-directory (or load-file-name ".")) 
+  "directory for the driver program.")
+
+(defvar edbi:driver-info (list "perl" 
+                               (expand-file-name 
+                                "edbi-bridge.pl" 
+                                edbi:driver-libpath))
+  "driver program info.")
+
+
+;;; Utility
+
 (defmacro edbi:seq (first-d &rest elements)
+  "Deferred sequence macro."
   (let* ((pit 'it)
          (vsym (gensym))
          (fs 
@@ -56,20 +70,20 @@
                      `(deferred:nextc ,pit (lambda (x) ,i)))))))
     `(deferred:$ ,fs ,@ds)))
 
+(defmacro edbi:liftd (f deferred)
+  "Deferred function utility, like liftM."
+  (let ((vsym (gensym)))
+    `(deferred:nextc ,deferred
+       (lambda (,vsym) (,f ,vsym)))))
 
-;;; Configurations
-
-(defvar edbi:driver-libpath (file-name-directory (or load-file-name ".")) 
-  "directory for the driver program.")
-
-(defvar edbi:driver-info (list "perl" 
-                               (expand-file-name 
-                                "edbi-bridge.pl" 
-                                edbi:driver-libpath))
-  "driver program info.")
+(defmacro edbi:sync (fsym conn &rest args)
+  `(epc:sync (edbi:connection-mngr ,conn) (,fsym ,conn ,@args)))
 
 
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;; Low level API
+
+;; data types
 
 (defun edbi:data-source (uri &optional username auth)
   "Create data source object."
@@ -88,52 +102,85 @@
   (nth 2 data-source))
 
 
+(defun edbi:connection (epc-mngr)
+  "Create an `edbi:connection' object."
+  (list epc-mngr nil))
+
+(defsubst edbi:connection-mngr (conn)
+  "Return the `epc:manager' object."
+  (car conn))
+
+(defun edbi:connection-buffers (conn)
+  "Return the buffer list of query editors."
+  (nth 1 conn))
+
+
+
+;; API
+
 (defun edbi:start ()
-  "Start the EPC process. This function returns an `epc:manager' object."
-  (epc:start-epc (car edbi:driver-info) (cdr edbi:driver-info)))
+  "Start the EPC process. This function returns an `edbi:connection' object."
+  (edbi:connection 
+   (epc:start-epc (car edbi:driver-info) (cdr edbi:driver-info))))
+
+(defun edbi:finish (conn)
+  "Terminate the EPC process."
+  ;; TODO close buffers
+  (epc:stop-epc (edbi:connection-mngr conn)))
+
 
 (defun edbi:connect (conn connection-info)
   "Connect to the DB. This function executes peer's API synchronously.
-CONNECTION-INFO is a list of (data_source username auth)."
-  (prog1
-      (epc:call-sync conn 'connect connection-info)
-    (setf (epc:manager-title conn) (car connection-info))))
+CONNECTION-INFO is a list of strings: (data_source username auth)."
+  (let ((mngr (edbi:connection-mngr conn)))
+    (prog1
+        (epc:call-sync mngr 'connect connection-info)
+    (setf (epc:manager-title mngr) (car connection-info)))))
 
 (defun edbi:do-d (conn sql &optional params)
   "Execute SQL and return a number of affected rows."
-  (epc:call-deferred conn 'do (cons sql params)))
+  (epc:call-deferred 
+   (edbi:connection-mngr conn) 'do (cons sql params)))
 
 (defun edbi:select-all-d (conn sql &optional params)
   "Execute the query SQL and returns all result rows."
-  (epc:call-deferred conn 'select-all (cons sql params)))
+  (epc:call-deferred 
+   (edbi:connection-mngr conn) 'select-all (cons sql params)))
 
 (defun edbi:prepare-d (conn sql)
   "[STH] Prepare the statement for SQL."
-  (epc:call-deferred conn 'prepare sql))
+  (epc:call-deferred
+   (edbi:connection-mngr conn) 'prepare sql))
 
 (defun edbi:execute-d (conn &optional params)
   "[STH] Execute the statement."
-  (epc:call-deferred conn 'execute params))
+  (epc:call-deferred
+   (edbi:connection-mngr conn) 'execute params))
 
 (defun edbi:fetch-columns-d (conn)
   "[STH] Fetch a list of the column titles."
-  (epc:call-deferred conn 'fetch-columns nil))
+  (epc:call-deferred
+   (edbi:connection-mngr conn) 'fetch-columns nil))
 
 (defun edbi:fetch-d (conn &optional num)
   "[STH] Fetch a row object. NUM is a number of retrieving rows. If NUM is nil, this function retrieves all rows."
-  (epc:call-deferred conn 'fetch num))
+  (epc:call-deferred
+   (edbi:connection-mngr conn) 'fetch num))
 
 (defun edbi:auto-commit-d (conn flag)
   "Set the auto-commit flag. FLAG is 'true' or 'false' string."
-  (epc:call-deferred conn 'auto-commit flag))
+  (epc:call-deferred
+   (edbi:connection-mngr conn) 'auto-commit flag))
 
 (defun edbi:commit-d (conn)
   "Commit transaction."
-  (epc:call-deferred conn 'commit nil))
+  (epc:call-deferred
+   (edbi:connection-mngr conn) 'commit nil))
 
 (defun edbi:rollback-d (conn)
   "Rollback transaction."
-  (epc:call-deferred conn 'rollback nil))
+  (epc:call-deferred
+   (edbi:connection-mngr conn) 'rollback nil))
 
 (defun edbi:disconnect-d (conn)
   "Close the DB connection."
@@ -141,25 +188,28 @@ CONNECTION-INFO is a list of (data_source username auth)."
 
 (defun edbi:status-info-d (conn)
   "Return a list of `err' code, `errstr' and `state'."
-  (epc:call-deferred conn 'status nil))
+  (epc:call-deferred (edbi:connection-mngr conn) 'status nil))
 
 
 (defun edbi:table-info-d (conn catalog schema table type)
   "Return a table info as (COLUMN-LIST ROW-LIST)."
-  (epc:call-deferred conn 'table-info (list catalog schema table type)))
+  (epc:call-deferred 
+   (edbi:connection-mngr conn) 'table-info (list catalog schema table type)))
 
 (defun edbi:column-info-d (conn catalog schema table column)
   "Return a column info as (COLUMN-LIST ROW-LIST)."
-  (epc:call-deferred conn 'column-info (list catalog schema table column)))
+  (epc:call-deferred
+   (edbi:connection-mngr conn) 'column-info (list catalog schema table column)))
 
 (defun edbi:primary-key-info-d (conn catalog schema table)
   "Return a primary key info as (COLUMN-LIST ROW-LIST)."
-  (epc:call-deferred conn 'primary-key-info (list catalog schema table)))
+  (epc:call-deferred
+   (edbi:connection-mngr conn) 'primary-key-info (list catalog schema table)))
 
 (defun edbi:foreign-key-info-d (conn pk-catalog pk-schema pk-table 
                                    fk-catalog fk-schema fk-table)
   "Return a foreign key info as (COLUMN-LIST ROW-LIST)."
-  (epc:call-deferred conn 'foreign-key-info
+  (epc:call-deferred (edbi:connection-mngr conn) 'foreign-key-info
                      (list pk-catalog pk-schema pk-table 
                            fk-catalog fk-schema fk-table)))
 
@@ -174,10 +224,7 @@ CONNECTION-INFO is a list of (data_source username auth)."
                    (lambda (xs) (nth num xs))))))
 
 
-;;; High level API
-
-
-
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;; User Interface
 
 (defun edbi:dialog-data-source-buffer (data-source on-ok-func 
@@ -465,7 +512,7 @@ CONNECTION-INFO is a list of (data_source username auth)."
   (let ((conn edbi:connection))
     (edbi:dbview-with-cp
      (when (and conn (y-or-n-p "Quit and disconnect DB ? "))
-       (epc:stop-epc conn)
+       (edbi:finish conn)
        (kill-buffer (current-buffer))))))
 
 (defun edbi:dbview-update-command ()
@@ -812,6 +859,7 @@ CONNECTION-INFO is a list of (data_source username auth)."
   (let ((args edbi:table-definition))
     (when args
       (apply 'edbi:dbview-table-definition-open args))))
+
 
 (provide 'edbi)
 ;;; edbi.el ends here

@@ -8,15 +8,15 @@
 
 ;; select
 (ctbl:popup-table-buffer-easy
- (epc:sync conn1 (edbi:select-all-d conn1 "select * from test")))
+ (edbi:sync edbi:select-all-d conn1 "select * from test"))
 
 ;; prepare - execute - fetch
 (progn
-  (epc:sync conn1 (edbi:prepare-d conn1 "select * from test"))
-  (epc:sync conn1 (edbi:execute-d conn1 nil))
+  (edbi:sync edbi:prepare-d conn1 "select * from test")
+  (edbi:sync edbi:execute-d conn1 nil)
   (ctbl:popup-table-buffer-easy
-   (epc:sync conn1 (edbi:fetch-d conn1))
-   (epc:sync conn1 (edbi:fetch-columns-d conn1))))
+   (edbi:sync edbi:fetch-d conn1)
+   (edbi:sync edbi:fetch-columns-d conn1)))
 
 ;; sequence notation
 (lexical-let (rows header (conn1 conn1))
@@ -29,21 +29,26 @@
      (ctbl:popup-table-buffer-easy rows header))))
 
 ;; insert
-(epc:sync conn1 (edbi:do-d conn1
-   "insert into test (name,comment) values ('aaaa','bbbbbbb')"))
+(edbi:sync edbi:do-d conn1
+   "insert into test (name,comment) values ('aaaa','bbbbbbb')")
+
+(edbi:sync edbi:prepare-d conn1
+   "insert into test (name,comment) values ('aaaa','bbbbbbb')")
+(edbi:sync edbi:execute-d conn1 nil)
+
 
 ;; delete
-(epc:sync conn1 (edbi:do-d conn1
-   "delete from test where name = 'aaaa'"))
+(edbi:sync edbi:do-d conn1
+   "delete from test where name = 'aaaa'")
 
 ;; transaction
 (lexical-let (a b (conn1 conn1))
   (edbi:seq
    (edbi:auto-commit-d conn1 "false")
    (edbi:do-d conn1 "insert into test (name,comment) values ('aaaa','bbbbbbb')")
-   (a <- (edbi:select-all-d conn1 "select count(id) from test"))
+   (a <- (edbi:liftd caar (edbi:select-all-d conn1 "select count(id) from test")))
    (edbi:rollback-d conn1)
-   (b <- (edbi:select-all-d conn1 "select count(id) from test"))
+   (b <- (edbi:liftd caar (edbi:select-all-d conn1 "select count(id) from test")))
    (edbi:auto-commit-d conn1 "true")
    (lambda (x) (message "result %S %S" a b))))
 
@@ -65,7 +70,7 @@
 
 (lexical-let (results (conn1 conn1))
   (edbi:seq
-   (results <- (edbi:primary-key-info-d conn1 nil nil nil))
+   (results <- (edbi:primary-key-info-d conn1 nil nil "participants"))
    (lambda (x) 
      (ctbl:popup-table-buffer-easy (cadr results) (car results)))))
 
@@ -78,8 +83,8 @@
        (ctbl:popup-table-buffer-easy (cadr results) (car results))))))
 
 ;; status
-(epc:sync conn1 (edbi:status-info-d conn1))
+(edbi:sync edbi:status-info-d conn1)
 
 ;; disconnect
-(epc:stop-epc conn1)
+(edbi:finish conn1)
 
