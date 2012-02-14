@@ -408,6 +408,13 @@ CONNECTION-INFO is a list of strings: (data_source username auth)."
      :foreground "maroon2" :weight bold))
   "Face for headers" :group 'edbi)
 
+(defface edbi:face-error
+  '((((class color) (background light))
+     :foreground "red" :weight bold)
+    (((class color) (background dark))
+     :foreground "red" :weight bold))
+  "Face for error" :group 'edbi)
+
 
 ;; database viewer
 
@@ -568,7 +575,7 @@ CONNECTION-INFO is a list of strings: (data_source username auth)."
           ds conn 
           :init-sql
           (if edbi:dbview-show-table-data-default-limit
-              (format "SELECT * FROM %s LIMIT 50" 
+              (format "SELECT * FROM %s LIMIT %s" 
                       table-name edbi:dbview-show-table-data-default-limit)
             (format "SELECT * FROM %s" table-name)) :executep t))))))
 
@@ -688,7 +695,7 @@ CONNECTION-INFO is a list of strings: (data_source username auth)."
   (when edbi:connection
     (let ((sql (buffer-substring-no-properties (point-min) (point-max)))
           (result-buf edbi:result-buffer))
-      (unless result-buf
+      (unless (and result-buf (buffer-live-p result-buf))
         (setq result-buf (edbi:dbview-query-result-get-buffer (current-buffer)))
         (setq edbi:result-buffer result-buf))
       (edbi:dbview-query-execute edbi:data-source edbi:connection sql result-buf))))
@@ -703,6 +710,7 @@ CONNECTION-INFO is a list of strings: (data_source username auth)."
        (edbi:execute-d conn nil)
        (lambda (exec-result)
          (cond
+          ;; SELECT
           ((equal "0E0" exec-result)
            (lexical-let (rows header)
              (edbi:seq
@@ -711,8 +719,11 @@ CONNECTION-INFO is a list of strings: (data_source username auth)."
               (lambda (x)
                 (edbi:dbview-query-result-open 
                  ds result-buf header rows)))))
-          (t (edbi:dbview-query-result-text
-              ds result-buf exec-result)))))
+          ;; ERROR
+          ((null exec-result)
+           (edbi:dbview-query-result-error ds conn result-buf))
+          ;; UPDATE etc
+          (t (edbi:dbview-query-result-text ds result-buf exec-result)))))
       (deferred:error it
         (lambda (err) (message "ERROR : %S" err))))))
 
@@ -723,8 +734,28 @@ CONNECTION-INFO is a list of strings: (data_source username auth)."
       (fundamental-mode)
       (edbi:dbview-query-result-modeline data-source)
       (erase-buffer)
-      (insert (format "OK. %s rows are affected.\n" execute-result))))
+      (insert (format "OK. %s rows are affected.\n" execute-result)))
+    (setq buffer-read-only t))
   (pop-to-buffer buf))
+
+(defun edbi:dbview-query-result-error (data-source conn buf)
+  "[internal] "
+  (let* ((status (edbi:sync edbi:status-info-d conn))
+         (err-code (car status))
+         (err-str (nth 1 status))
+         (err-state (nth 2 status)))
+    (with-current-buffer buf
+      (let (buffer-read-only)
+        (fundamental-mode)
+        (edbi:dbview-query-result-modeline data-source)
+        (erase-buffer)
+        (insert 
+         (propertize
+          (format "ERROR! [%s]" err-state)
+          'face 'edbi:face-error)
+         "\n" err-str))
+      (setq buffer-read-only t))
+    (pop-to-buffer buf)))
 
 (defvar edbi:dbview-query-result-keymap
   (epc:define-keymap
@@ -885,7 +916,6 @@ CONNECTION-INFO is a list of strings: (data_source username auth)."
       (current-buffer))))
 
 (defun edbi:dbview-table-definition-show-data-command ()
-  ""
   (interactive)
   (let ((args edbi:table-definition))
     (when args
@@ -894,7 +924,7 @@ CONNECTION-INFO is a list of strings: (data_source username auth)."
          data-source conn 
          :init-sql
          (if edbi:dbview-show-table-data-default-limit
-             (format "SELECT * FROM %s LIMIT 50" 
+             (format "SELECT * FROM %s LIMIT %s" 
                      table-name edbi:dbview-show-table-data-default-limit)
            (format "SELECT * FROM %s" table-name)) :executep t)))))
 
