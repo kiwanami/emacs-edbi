@@ -46,8 +46,7 @@ sub edbi_prepare {
 sub edbi_execute {
   return undef unless $sth;
   my ($params) = @_;
-  $sth->execute(@$params) or return undef;
-  return 1;
+  return $sth->execute(@$params) or return undef;
 }
 
 sub edbi_fetch_columns {

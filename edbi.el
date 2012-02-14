@@ -27,7 +27,7 @@
 
 (eval-when-compile (require 'cl))
 (require 'epc)
-
+(require 'sql)
 
 ;; deferred macro
 (defmacro edbi:seq (first-d &rest elements)
@@ -381,6 +381,7 @@ CONNECTION-INFO is a list of (data_source username auth)."
    '(
      ("g"   . edbi:dbview-update-command)
      ("SPC" . edbi:dbview-show-table-definition-command)
+     ("c"   . edbi:dbview-query-editor-command)
      ("C-m" . edbi:dbview-show-table-data-command)
      ("q"   . edbi:dbview-quit-command)
      )) "Keymap for the DB Viewer buffer.")
@@ -482,13 +483,183 @@ CONNECTION-INFO is a list of (data_source username auth)."
          (edbi:dbview-table-definition-open
           ds conn catalog schema table))))))
 
+(defun edbi:dbview-query-editor-command ()
+  "ARGS"
+  (interactive)
+  (let ((conn edbi:connection) (ds edbi:data-source))
+    (when conn
+      (edbi:dbview-with-cp
+       (edbi:dbview-query-editor-open ds conn)))))
+
+(defvar edbi:dbview-show-table-data-default-limit 50
+  "edbi:dbview-show-table-data-default-limit.")
+
 (defun edbi:dbview-show-table-data-command ()
   (interactive)
-  
-  )
+  (let ((conn edbi:connection) (ds edbi:data-source))
+    (when conn
+      (edbi:dbview-with-cp
+       (destructuring-bind (catalog schema table-name) table
+         (edbi:dbview-query-editor-open 
+          ds conn 
+          (if edbi:dbview-show-table-data-default-limit
+              (format "SELECT * FROM %s LIMIT 50" 
+                      table-name edbi:dbview-show-table-data-default-limit)
+            (format "SELECT * FROM %s" table-name)) t))))))
 
 
-;; 
+;; query editor and viewer
+
+(defvar edbi:sql-mode-map 
+  (epc:define-keymap
+   '(
+     ("C-c C-c" . edbi:dbview-query-editor-execute-command)
+     )) "Keymap for the `edbi:sql-mode'.")
+
+(defvar edbi:sql-mode-hook nil  "edbi:sql-mode-hook.")
+
+(defun edbi:sql-mode ()
+  "Major mode for SQL. This function is copied from sql.el and modified."
+  (interactive)
+  (kill-all-local-variables)
+  (setq major-mode 'edbi:sql-mode)
+  (setq mode-name "EDBI SQL")
+  (use-local-map edbi:sql-mode-map)
+  (set-syntax-table sql-mode-syntax-table)
+  (make-local-variable 'font-lock-defaults)
+  (make-local-variable 'sql-mode-font-lock-keywords)
+  (make-local-variable 'comment-start)
+  (setq comment-start "--")
+  (make-local-variable 'paragraph-separate)
+  (make-local-variable 'paragraph-start)
+  (setq paragraph-separate "[\f]*$"	paragraph-start "[\n\f]")
+  ;; Abbrevs
+  (setq local-abbrev-table sql-mode-abbrev-table)
+  (setq abbrev-all-caps 1)
+  ;; Run hook
+  (if (fboundp 'run-mode-hooks)
+      (run-mode-hooks 'edbi:sql-mode-hook)
+    (run-hooks 'edbi:sql-mode-hook))
+  (sql-product-font-lock nil t))
+
+
+(defvar edbi:dbview-uid 0 "[internal] ")
+
+(defun edbi:dbview-uid ()
+  "[internal] "
+  (incf edbi:dbview-uid))
+
+(defun edbi:dbview-query-editor-create-buffer ()
+  "[internal] "
+  (let* ((uid (edbi:dbview-uid))
+         (buf-name (format "*edbi:query-editor %s *" uid))
+         (buf (get-buffer-create buf-name)))
+    (with-current-buffer buf
+      (edbi:sql-mode)
+      (set (make-local-variable 'edbi:buffer-id) uid))
+    buf))
+
+(defun edbi:dbview-query-editor-open (data-source conn &optional init-sql executep)
+  "[internal] "
+  (let ((buf (edbi:dbview-query-editor-create-buffer)))
+    (with-current-buffer buf
+      (set (make-local-variable 'edbi:data-source) data-source)
+      (set (make-local-variable 'edbi:connection) conn)
+      (set (make-local-variable 'edbi:result-buffer) nil)
+      (when init-sql
+        (insert init-sql)))
+    (switch-to-buffer buf)
+    (when executep
+      (with-current-buffer buf
+        (edbi:dbview-query-editor-execute-command)))))
+
+(defun edbi:dbview-query-result-get-buffer (buf)
+  "[internal] "
+  (let* ((uid (buffer-local-value 'edbi:buffer-id buf))
+         (rbuf-name (format "*edbi:query-result %s" uid))
+         (rbuf (get-buffer rbuf-name)))
+    (unless rbuf
+      (setq rbuf (get-buffer-create rbuf-name))
+      (with-current-buffer rbuf
+        (set (make-local-variable 'edbi:query-buffer) buf)))
+    rbuf))
+
+(defun edbi:dbview-query-editor-execute-command ()
+  "Execute SQL and show result buffer."
+  (interactive)
+  (when edbi:connection
+    (let ((sql (buffer-substring-no-properties (point-min) (point-max)))
+          (result-buf edbi:result-buffer))
+      (unless result-buf
+        (setq result-buf (edbi:dbview-query-result-get-buffer (current-buffer))))
+      (edbi:dbview-query-execute edbi:connection sql result-buf))))
+
+(defun edbi:dbview-query-execute (conn sql result-buf)
+  "[internal] "
+  (lexical-let ((conn conn) (sql sql) (result-buf result-buf))
+    (deferred:$
+      (edbi:seq
+       (edbi:prepare-d conn sql)
+       (edbi:execute-d conn nil)
+       (lambda (exec-result)
+         (cond
+          ((equal "0E0" exec-result)
+           (lexical-let (rows header)
+             (edbi:seq
+              (rows <- (edbi:fetch-d conn))
+              (header <- (edbi:fetch-columns-d conn))
+              (lambda (x)
+                (edbi:dbview-query-result-open result-buf header rows)))))
+          (t (edbi:dbview-query-result-text result-buf exec-result)))))
+      (deferred:error it
+        (lambda (err) (message "ERROR : %S" err))))))
+
+(defun edbi:dbview-query-result-text (buf execute-result)
+  "[internal] "
+  (with-current-buffer buf
+    (let (buffer-read-only)
+      (erase-buffer)
+      (insert (format "OK. %s rows are affected.\n" execute-result))))
+  (pop-to-buffer buf))
+
+(defvar edbi:dbview-query-result-keymap
+  (epc:define-keymap
+   '(
+     ("q"   . edbi:dbview-query-result-quit-command)
+     )) "Keymap for the query result viewer buffer.")
+
+(defun edbi:dbview-query-result-open (buf header rows)
+  "[internal] "
+  (let (table-cp)
+    (setq table-cp
+          (ctbl:create-table-component-buffer
+           :buffer buf
+           :model
+           (make-ctbl:model
+            :column-model
+            (loop for i in header
+                  collect (make-ctbl:cmodel :title (format "%s" i) 
+                                            :align 'left :min-width 5))
+            :data rows
+            :sort-state nil)
+           :custom-map edbi:dbview-query-result-keymap))
+    (ctbl:cp-set-selected-cell table-cp '(0 . 0))
+    (with-current-buffer buf
+      (set (make-local-variable 'edbi:before-win-num) (length (window-list))))
+    (pop-to-buffer buf)))
+
+(defun edbi:dbview-query-result-quit-command ()
+  "Quit the query result buffer."
+  (interactive)
+  (let ((cbuf (current-buffer))
+        (win-num (length (window-list))))
+    (when (and (not (one-window-p))
+               (> win-num edbi:before-win-num))
+      (delete-window))
+    (kill-buffer cbuf)))
+
+
+;; table definition viewer
 
 (defvar edbi:dbview-table-buffer-name "*edbi-dbviewer-table*" "[internal] Table buffer name.")
 
@@ -498,6 +669,8 @@ CONNECTION-INFO is a list of (data_source username auth)."
    '(
      ("g"   . edbi:dbview-table-definition-update-command)
      ("q"   . edbi:dbview-table-definition-quit-command)
+     ("c"   . edbi:dbview-table-definition-query-editor-command)
+     ("V"   . edbi:dbview-table-definition-show-data-command)
      )) "Keymap for the DB Table Viewer buffer.")
 
 (defun edbi:dbview-table-definition-header (data-source table-name &optional items)
@@ -604,6 +777,26 @@ CONNECTION-INFO is a list of (data_source username auth)."
         (ctbl:cp-set-selected-cell table-cp '(0 . 0)))
       (setq buffer-read-only t)
       (current-buffer))))
+
+(defun edbi:dbview-table-definition-show-data-command ()
+  ""
+  (interactive)
+  (let ((args edbi:table-definition))
+    (when args
+      (destructuring-bind (data-source conn catalog schema table-name) args
+        (edbi:dbview-query-editor-open 
+         data-source conn 
+         (if edbi:dbview-show-table-data-default-limit
+             (format "SELECT * FROM %s LIMIT 50" 
+                     table-name edbi:dbview-show-table-data-default-limit)
+           (format "SELECT * FROM %s" table-name)) t)))))
+
+(defun edbi:dbview-table-definition-query-editor-command ()
+  (interactive)
+  (let ((args edbi:table-definition))
+    (when args
+      (destructuring-bind (data-source conn catalog schema table-name) args
+        (edbi:dbview-query-editor-open data-source conn)))))
 
 (defun edbi:dbview-table-definition-quit-command ()
   (interactive)
