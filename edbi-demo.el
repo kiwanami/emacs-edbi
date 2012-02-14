@@ -10,6 +10,12 @@
 (ctbl:popup-table-buffer-easy
  (edbi:sync edbi:select-all-d conn1 "select * from test"))
 
+;; select error
+(ctbl:popup-table-buffer-easy
+ (edbi:sync edbi:select-all-d conn1 "select * from test1"))
+;; error status
+(edbi:sync edbi:status-info-d conn1)
+
 ;; prepare - execute - fetch
 (progn
   (edbi:sync edbi:prepare-d conn1 "select * from test")
@@ -82,7 +88,7 @@
      (when results
        (ctbl:popup-table-buffer-easy (cadr results) (car results))))))
 
-;; status
+;; error status
 (edbi:sync edbi:status-info-d conn1)
 
 ;; disconnect
