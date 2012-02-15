@@ -79,6 +79,18 @@
 (defmacro edbi:sync (fsym conn &rest args)
   `(epc:sync (edbi:connection-mngr ,conn) (,fsym ,conn ,@args)))
 
+(defun edbi:column-selector (columns name)
+  "[internal] Return a column selector function."
+  (lexical-let (num)
+    (or
+     (loop for c in columns
+           for i from 0
+           if (equal c name)
+           return (progn 
+                    (setq num i)
+                    (lambda (xs) (nth num xs))))
+     (lambda (xs) nil))))
+
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;; Low level API
@@ -222,18 +234,6 @@ CONNECTION-INFO is a list of strings: (data_source username auth)."
   (epc:call-deferred (edbi:connection-mngr conn) 'foreign-key-info
                      (list pk-catalog pk-schema pk-table 
                            fk-catalog fk-schema fk-table)))
-
-(defun edbi:column-selector (columns name)
-  "[internal] Return a column selector function."
-  (lexical-let (num)
-    (or
-     (loop for c in columns
-           for i from 0
-           if (equal c name)
-           return (progn 
-                    (setq num i)
-                    (lambda (xs) (nth num xs))))
-     (lambda (xs) nil))))
 
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -694,9 +694,6 @@ CONNECTION-INFO is a list of strings: (data_source username auth)."
   (setq local-abbrev-table sql-mode-abbrev-table)
   (setq abbrev-all-caps 1)
   ;; Run hook
-  (if (fboundp 'run-mode-hooks)
-      (run-mode-hooks 'edbi:sql-mode-hook)
-    (run-hooks 'edbi:sql-mode-hook))
   (sql-product-font-lock nil t))
 
 (defun edbi:dbview-query-editor-quit-command ()
@@ -793,7 +790,10 @@ that the current buffer is the query editor buffer."
               " " "-%-"))
       (when init-sql
         (erase-buffer)
-        (insert init-sql)))
+        (insert init-sql))
+      (if (fboundp 'run-mode-hooks)
+          (run-mode-hooks 'edbi:sql-mode-hook)
+        (run-hooks 'edbi:sql-mode-hook)))
     (switch-to-buffer buf)
     (when executep
       (with-current-buffer buf
@@ -830,38 +830,52 @@ that the current buffer is the query editor buffer."
         (setq edbi:result-buffer result-buf))
       (edbi:dbview-query-execute edbi:data-source edbi:connection sql result-buf))))
 
+(defvar edbi:dbview-query-execute-semaphore (cc:semaphore-create 1)
+  "[internal] edbi:dbview-query-execute-semaphore.")
+
+(defun edbi:dbview-query-execute-semaphore-clear ()
+  (interactive)
+  (cc:semaphore-release-all edbi:dbview-query-execute-semaphore))
+
 (defun edbi:dbview-query-execute (data-source conn sql result-buf)
   "[internal] "
   (lexical-let ((ds data-source) (conn conn)
                 (sql sql) (result-buf result-buf))
-    (deferred:$
-      (edbi:seq
-       (edbi:prepare-d conn sql)
-       (edbi:execute-d conn nil)
-       (lambda (exec-result)
-         (cond
-          ;; SELECT
-          ((or (equal "0E0" exec-result) (equal -1 exec-result))
-           (edbi:dbview-query-editor-history-add sql)
-           (lexical-let (rows header)
-             (edbi:seq
-              (rows <- (edbi:fetch-d conn))
-              (header <- (edbi:fetch-columns-d conn))
-              (lambda (x)
-                (edbi:dbview-query-result-open 
-                 ds result-buf header rows)))))
-          ;; ERROR
-          ((null exec-result)
-           (edbi:dbview-query-result-error ds conn result-buf))
-          ;; UPDATE etc
-          (t 
-           (edbi:dbview-query-editor-history-add sql)
-           (edbi:dbview-query-result-text ds result-buf exec-result)))))
-      (deferred:error it
-        (lambda (err) (message "ERROR : %S" err))))))
+    (cc:semaphore-with edbi:dbview-query-execute-semaphore
+      (lambda (x) 
+        (deferred:$
+          (edbi:seq
+           (edbi:prepare-d conn sql)
+           (edbi:execute-d conn nil)
+           (lambda (exec-result)
+             (message "Result Code: %S" exec-result) ; for debug
+             (cond
+              ;; SELECT
+              ((or (equal "0E0" exec-result) 
+                   (and exec-result (numberp exec-result))) ; some DBD returns rows number
+               (edbi:dbview-query-editor-history-add sql)
+               (lexical-let (rows header (exec-result exec-result))
+                 (edbi:seq
+                  (rows <- (edbi:fetch-d conn))
+                  (header <- (edbi:fetch-columns-d conn))
+                  (lambda (x)
+                    (cond
+                     ((or rows (equal "0E0" exec-result)) ; select results
+                      (edbi:dbview-query-result-open ds result-buf header rows))
+                     (t    ; update results?
+                      (edbi:dbview-query-result-text ds result-buf exec-result)))))))
+              ;; ERROR
+              ((null exec-result)
+               (edbi:dbview-query-result-error ds conn result-buf))
+              ;; UPDATE etc
+              (t 
+               (edbi:dbview-query-editor-history-add sql)
+               (edbi:dbview-query-result-text ds result-buf exec-result)))))
+          (deferred:error it
+            (lambda (err) (message "ERROR : %S" err))))))))
 
 (defun edbi:dbview-query-result-text (data-source buf execute-result)
-  "[internal] "
+  "[internal] Display update results."
   (with-current-buffer buf
     (let (buffer-read-only)
       (fundamental-mode)
@@ -872,7 +886,7 @@ that the current buffer is the query editor buffer."
   (pop-to-buffer buf))
 
 (defun edbi:dbview-query-result-error (data-source conn buf)
-  "[internal] "
+  "[internal] Display errors."
   (let* ((status (edbi:sync edbi:status-info-d conn))
          (err-code (car status))
          (err-str (nth 1 status))
@@ -900,7 +914,7 @@ that the current buffer is the query editor buffer."
      )) "Keymap for the query result viewer buffer.")
 
 (defun edbi:dbview-query-result-open (data-source buf header rows)
-  "[internal] "
+  "[internal] Display SELECT results."
   (let (table-cp (param (copy-ctbl:param ctbl:default-rendering-param)))
     (setf (ctbl:param-fixed-header param) edbi:query-result-fix-header)
     (setq table-cp
@@ -954,7 +968,7 @@ that the current buffer is the query editor buffer."
    (propertize (format "Table: %s\n" table-name) 'face 'edbi:face-title)
    (format "DB: %s\n" (edbi:data-source-uri data-source))
    (if items
-     (propertize (format "[%s items]\n" (length items)) 'face 'edbi:face-header))))
+       (propertize (format "[%s items]\n" (length items)) 'face 'edbi:face-header))))
 
 (defun edbi:dbview-tabledef-open (data-source conn catalog schema table)
   "[internal] "
@@ -1095,6 +1109,109 @@ that the current buffer is the query editor buffer."
     (when args
       (apply 'edbi:dbview-tabledef-open args))))
 
+
+;;; for auto-complete
+
+
+(defun edbi:setup-auto-complete ()
+  "Initialization for auto-complete."
+  (ac-define-source edbi:tables
+    '((candidates . edbi:ac-editor-table-candidates)
+      (symbol . "t")))
+  (ac-define-source edbi:columns
+    '((candidates . edbi:ac-editor-column-candidates)
+      (symbol . "c")))
+  (defvar edbi:ac-editor-table-candidate-cache nil  "[internal] Word cache for auto-complete.")
+  (defvar edbi:ac-editor-column-candidate-cache nil  "[internal] Word cache for auto-complete.")
+  (make-variable-buffer-local 'edbi:ac-editor-table-candidate-cache)
+  (make-variable-buffer-local 'edbi:ac-editor-column-candidate-cache)
+  (add-hook 'edbi:sql-mode-hook 'edbi:ac-edbi:sql-mode-hook)
+  (unless (memq 'edbi:sql-mode ac-modes)
+    (setq ac-modes 
+          (cons 'edbi:sql-mode ac-modes))))
+
+
+(defun edbi:ac-edbi:sql-mode-hook ()
+  (edbi:ac-editor-word-candidate-update)
+  (make-local-variable 'ac-sources)
+  (setq ac-sources '(ac-source-words-in-same-mode-buffers
+                     ac-source-edbi:tables
+                     ac-source-edbi:columns)))
+
+(defun edbi:ac-editor-table-candidates ()
+  "Auto complete candidate function."
+  edbi:ac-editor-table-candidate-cache)
+
+(defun edbi:ac-editor-column-candidates ()
+  "Auto complete candidate function."
+  edbi:ac-editor-column-candidate-cache)
+
+(defun edbi:ac-editor-word-candidate-update ()
+  "[internal] "
+  (when edbi:connection
+    (lexical-let ((conn edbi:connection) (buf (current-buffer))
+                  table-info column-info)
+      (deferred:$
+        (deferred:wait 200)
+        (cc:semaphore-with edbi:dbview-query-execute-semaphore
+          (lambda (x) 
+            (edbi:seq
+             (table-info <- (edbi:table-info-d conn nil nil nil nil))
+             (column-info <- (edbi:column-info-d conn nil nil nil nil))
+             (lambda (x) 
+               (edbi:ac-editor-word-candidate-update1 buf table-info column-info)))))))))
+
+(defun edbi:ac-editor-word-candidate-update1 (buf table-info column-info)
+  "[internal] "
+  (let (tables)
+  (setq edbi:ac-editor-table-candidate-cache
+         (loop 
+          with hrow = (and table-info (car table-info))
+          with rows = (and table-info (cadr table-info))
+          with catalog-f = (edbi:column-selector hrow "TABLE_CAT")
+          with schema-f  = (edbi:column-selector hrow "TABLE_SCHEM")
+          with table-f   = (edbi:column-selector hrow "TABLE_NAME")
+          with type-f    = (edbi:column-selector hrow "TABLE_TYPE")
+          with remarks-f = (edbi:column-selector hrow "REMARKS")
+          for row in rows
+          for catalog = (funcall catalog-f row)
+          for schema  = (funcall schema-f row)
+          for type    = (or (funcall type-f row) "")
+          for table   = (funcall table-f row)
+          for remarks = (or (funcall remarks-f row) "")
+          if (and table (not (string-match "\\(INDEX\\|SYSTEM\\)" type)))
+          collect
+          (progn
+            (push table tables)
+            (cons (propertize table 'summary type 'document (format "%s\n%s" type remarks))
+                  table))))
+  (setq edbi:ac-editor-column-candidate-cache
+         (loop
+          with hrow = (and column-info (car column-info))
+          with rows = (and column-info (cadr column-info))
+          with table-name-f  = (edbi:column-selector hrow "TABLE_NAME")
+          with column-name-f = (edbi:column-selector hrow "COLUMN_NAME")
+          with type-name-f   = (edbi:column-selector hrow "TYPE_NAME")
+          with column-size-f = (edbi:column-selector hrow "COLUMN_SIZE")
+          with nullable-f    = (edbi:column-selector hrow "NULLABLE")
+          with remarks-f     = (edbi:column-selector hrow "REMARKS")
+          for row in rows
+          for table-name  = (funcall table-name-f row)
+          for column-name = (funcall column-name-f row)
+          for type-name   = (funcall type-name-f row)
+          for column-size = (or (funcall column-size-f row) "")
+          for nullable    = (if (equal 0 (funcall nullable-f row)) "NOT NULL" "")
+          for remarks     = (or (funcall remarks-f row) "")
+          if (and column-name (member table-name tables))
+          collect
+          (cons (propertize column-name 'summary table-name
+                            'document (format "%s %s %s\n%s" type-name
+                                              column-size nullable remarks))
+           column-name)))))
+
+(eval-after-load 'auto-complete
+  '(progn
+     (edbi:setup-auto-complete)))
 
 (provide 'edbi)
 ;;; edbi.el ends here
