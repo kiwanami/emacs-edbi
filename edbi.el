@@ -526,7 +526,7 @@ CONNECTION-INFO is a list of strings: (data_source username auth)."
    ctbl:table-mode-map
    '(
      ("g"   . edbi:dbview-update-command)
-     ("SPC" . edbi:dbview-show-table-definition-command)
+     ("SPC" . edbi:dbview-show-tabledef-command)
      ("c"   . edbi:dbview-query-editor-command)
      ("C"   . edbi:dbview-query-editor-new-command)
      ("C-m" . edbi:dbview-show-table-data-command)
@@ -621,13 +621,13 @@ CONNECTION-INFO is a list of strings: (data_source username auth)."
     (when conn
       (edbi:dbview-open ds conn))))
 
-(defun edbi:dbview-show-table-definition-command ()
+(defun edbi:dbview-show-tabledef-command ()
   (interactive)
   (let ((conn edbi:connection) (ds edbi:data-source))
     (when conn
       (edbi:dbview-with-cp
        (destructuring-bind (catalog schema table) table
-         (edbi:dbview-table-definition-open
+         (edbi:dbview-tabledef-open
           ds conn catalog schema table))))))
 
 (defun edbi:dbview-query-editor-command ()
@@ -890,14 +890,14 @@ CONNECTION-INFO is a list of strings: (data_source username auth)."
   (epc:add-keymap
    ctbl:table-mode-map
    '(
-     ("g"   . edbi:dbview-table-definition-update-command)
-     ("q"   . edbi:dbview-table-definition-quit-command)
-     ("c"   . edbi:dbview-table-definition-query-editor-command)
-     ("C"   . edbi:dbview-table-definition-query-editor-new-command)
-     ("V"   . edbi:dbview-table-definition-show-data-command)
+     ("g"   . edbi:dbview-tabledef-update-command)
+     ("q"   . edbi:dbview-tabledef-quit-command)
+     ("c"   . edbi:dbview-tabledef-query-editor-command)
+     ("C"   . edbi:dbview-tabledef-query-editor-new-command)
+     ("V"   . edbi:dbview-tabledef-show-data-command)
      )) "Keymap for the DB Table Viewer buffer.")
 
-(defun edbi:dbview-table-definition-header (data-source table-name &optional items)
+(defun edbi:dbview-tabledef-header (data-source table-name &optional items)
   "[internal] "
   (concat
    (propertize (format "Table: %s\n" table-name) 'face 'edbi:face-title)
@@ -905,16 +905,16 @@ CONNECTION-INFO is a list of strings: (data_source username auth)."
    (if items
      (propertize (format "[%s items]\n" (length items)) 'face 'edbi:face-header))))
 
-(defun edbi:dbview-table-definition-open (data-source conn catalog schema table)
+(defun edbi:dbview-tabledef-open (data-source conn catalog schema table)
   "[internal] "
   (with-current-buffer
       (get-buffer-create edbi:dbview-table-buffer-name)
     (let (buffer-read-only)
       (erase-buffer)
       (set (make-local-variable 'edbi:before-win-num) (length (window-list)))
-      (set (make-local-variable 'edbi:table-definition)
+      (set (make-local-variable 'edbi:tabledef)
            (list data-source conn catalog schema table))
-      (insert (edbi:dbview-table-definition-header data-source table)
+      (insert (edbi:dbview-tabledef-header data-source table)
               "[connecting...]\n")))
   (unless (equal (buffer-name) edbi:dbview-table-buffer-name)
     (pop-to-buffer edbi:dbview-table-buffer-name))
@@ -926,11 +926,11 @@ CONNECTION-INFO is a list of strings: (data_source username auth)."
      (pkey-info   <- (edbi:primary-key-info-d conn catalog schema table))
      (index-info  <- (edbi:table-info-d conn catalog schema table "INDEX"))
      (lambda (x) 
-       (edbi:dbview-table-definition-create-buffer 
+       (edbi:dbview-tabledef-create-buffer 
         data-source conn table
         column-info pkey-info index-info)))))
 
-(defun edbi:dbview-table-definition-get-pkey-info (pkey-info column-name)
+(defun edbi:dbview-tabledef-get-pkey-info (pkey-info column-name)
   "[internal] "
   (loop with pkey-hrow = (car pkey-info)
         with pkey-rows = (cadr pkey-info)
@@ -945,7 +945,7 @@ CONNECTION-INFO is a list of strings: (data_source username auth)."
                        (funcall keyseq-f row))
         finally return ""))
 
-(defun edbi:dbview-table-definition-create-buffer (data-source conn table-name column-info pkey-info index-info)
+(defun edbi:dbview-tabledef-create-buffer (data-source conn table-name column-info pkey-info index-info)
   "[internal] "
   (let* ((buf (get-buffer-create edbi:dbview-table-buffer-name))
          (hrow (and column-info (car column-info)))
@@ -965,14 +965,14 @@ CONNECTION-INFO is a list of strings: (data_source username auth)."
                 collect
                 (list column-name type-name 
                       (or column-size "")
-                      (edbi:dbview-table-definition-get-pkey-info pkey-info column-name)
+                      (edbi:dbview-tabledef-get-pkey-info pkey-info column-name)
                       (if (equal nullable 0) "NOT NULL" "") (or remarks "")
                       row))) table-cp)
     (with-current-buffer buf
       (let (buffer-read-only)
         (erase-buffer)
         ;; header
-        (insert (edbi:dbview-table-definition-header data-source table-name data))
+        (insert (edbi:dbview-tabledef-header data-source table-name data))
         ;; table
         (setq table-cp
               (ctbl:create-table-component-region
@@ -1002,9 +1002,9 @@ CONNECTION-INFO is a list of strings: (data_source username auth)."
       (setq buffer-read-only t)
       (current-buffer))))
 
-(defun edbi:dbview-table-definition-show-data-command ()
+(defun edbi:dbview-tabledef-show-data-command ()
   (interactive)
-  (let ((args edbi:table-definition))
+  (let ((args edbi:tabledef))
     (when args
       (destructuring-bind (data-source conn catalog schema table-name) args
         (edbi:dbview-query-editor-open 
@@ -1015,21 +1015,21 @@ CONNECTION-INFO is a list of strings: (data_source username auth)."
                      table-name edbi:dbview-show-table-data-default-limit)
            (format "SELECT * FROM %s" table-name)) :executep t)))))
 
-(defun edbi:dbview-table-definition-query-editor-command ()
+(defun edbi:dbview-tabledef-query-editor-command ()
   (interactive)
-  (let ((args edbi:table-definition))
+  (let ((args edbi:tabledef))
     (when args
       (destructuring-bind (data-source conn catalog schema table-name) args
         (edbi:dbview-query-editor-open data-source conn)))))
 
-(defun edbi:dbview-table-definition-query-editor-new-command ()
+(defun edbi:dbview-tabledef-query-editor-new-command ()
   (interactive)
-  (let ((args edbi:table-definition))
+  (let ((args edbi:tabledef))
     (when args
       (destructuring-bind (data-source conn catalog schema table-name) args
         (edbi:dbview-query-editor-open data-source conn :force-create-p t)))))
 
-(defun edbi:dbview-table-definition-quit-command ()
+(defun edbi:dbview-tabledef-quit-command ()
   (interactive)
   (let ((cbuf (current-buffer))
         (win-num (length (window-list))))
@@ -1038,11 +1038,11 @@ CONNECTION-INFO is a list of strings: (data_source username auth)."
       (delete-window))
     (kill-buffer cbuf)))
 
-(defun edbi:dbview-table-definition-update-command ()
+(defun edbi:dbview-tabledef-update-command ()
   (interactive)
-  (let ((args edbi:table-definition))
+  (let ((args edbi:tabledef))
     (when args
-      (apply 'edbi:dbview-table-definition-open args))))
+      (apply 'edbi:dbview-tabledef-open args))))
 
 
 (provide 'edbi)
