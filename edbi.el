@@ -226,12 +226,14 @@ CONNECTION-INFO is a list of strings: (data_source username auth)."
 (defun edbi:column-selector (columns name)
   "[internal] Return a column selector function."
   (lexical-let (num)
-    (loop for c in columns
-          for i from 0
-          if (equal c name)
-          return (progn 
-                   (setq num i)
-                   (lambda (xs) (nth num xs))))))
+    (or
+     (loop for c in columns
+           for i from 0
+           if (equal c name)
+           return (progn 
+                    (setq num i)
+                    (lambda (xs) (nth num xs))))
+     (lambda (xs) nil))))
 
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -563,7 +565,7 @@ CONNECTION-INFO is a list of strings: (data_source username auth)."
        (edbi:dbview-query-editor-open ds conn :force-create-p t)))))
 
 (defvar edbi:dbview-show-table-data-default-limit 50
-  "edbi:dbview-show-table-data-default-limit.")
+  "Maximum row numbers for default table viewer SQL.")
 
 (defun edbi:dbview-show-table-data-command ()
   (interactive)
@@ -711,7 +713,7 @@ CONNECTION-INFO is a list of strings: (data_source username auth)."
        (lambda (exec-result)
          (cond
           ;; SELECT
-          ((equal "0E0" exec-result)
+          ((or (equal "0E0" exec-result) (equal -1 exec-result))
            (lexical-let (rows header)
              (edbi:seq
               (rows <- (edbi:fetch-d conn))
@@ -757,6 +759,9 @@ CONNECTION-INFO is a list of strings: (data_source username auth)."
       (setq buffer-read-only t))
     (pop-to-buffer buf)))
 
+(defvar edbi:query-result-column-max-width 50 "Maximum column width for query results.")
+(defvar edbi:query-result-fix-header t "Fixed header option for query results.")
+
 (defvar edbi:dbview-query-result-keymap
   (epc:define-keymap
    '(
@@ -765,16 +770,18 @@ CONNECTION-INFO is a list of strings: (data_source username auth)."
 
 (defun edbi:dbview-query-result-open (data-source buf header rows)
   "[internal] "
-  (let (table-cp)
+  (let (table-cp (param (copy-ctbl:param ctbl:default-rendering-param)))
+    (setf (ctbl:param-fixed-header param) edbi:query-result-fix-header)
     (setq table-cp
           (ctbl:create-table-component-buffer
-           :buffer buf
+           :buffer buf :param param
            :model
            (make-ctbl:model
             :column-model
             (loop for i in header
-                  collect (make-ctbl:cmodel :title (format "%s" i) 
-                                            :align 'left :min-width 5))
+                  collect (make-ctbl:cmodel
+                           :title (format "%s" i) :align 'left
+                           :min-width 5 :max-width edbi:query-result-column-max-width))
             :data rows
             :sort-state nil)
            :custom-map edbi:dbview-query-result-keymap))
