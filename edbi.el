@@ -671,7 +671,6 @@ CONNECTION-INFO is a list of strings: (data_source username auth)."
      ("C-c q"   . edbi:dbview-query-editor-quit-command)
      ("M-p"     . edbi:dbview-query-editor-history-back-command)
      ("M-n"     . edbi:dbview-query-editor-history-forward-command)
-     ;; TODO history list
      )) "Keymap for the `edbi:sql-mode'.")
 
 (defvar edbi:sql-mode-hook nil  "edbi:sql-mode-hook.")
@@ -708,11 +707,57 @@ CONNECTION-INFO is a list of strings: (data_source username auth)."
     (kill-buffer edbi:result-buffer))
   (kill-buffer))
 
+
 (defvar edbi:dbview-uid 0 "[internal] ")
 
 (defun edbi:dbview-uid ()
   "[internal] UID counter."
   (incf edbi:dbview-uid))
+
+
+(defvar edbi:query-editor-history-max-num 50 "[internal] Maximum number of the query histories.")
+(defvar edbi:query-editor-history-list nil "[internal] A list of the query histories.")
+
+(defun edbi:dbview-query-editor-history-back-command ()
+  (interactive)
+  (when (and edbi:history-index edbi:query-editor-history-list
+             (< edbi:history-index (length edbi:query-editor-history-list)))
+    (when (= 0 edbi:history-index)
+      (setq edbi:history-current (buffer-string)))
+    (erase-buffer)
+    (setq edbi:history-index (1+ edbi:history-index))
+    (insert (nth edbi:history-index edbi:query-editor-history-list))
+    (message "Query history : [%s/%s]" 
+             edbi:history-index
+             (length edbi:query-editor-history-list))))
+
+(defun edbi:dbview-query-editor-history-forward-command ()
+  (interactive)
+  (when (and edbi:history-index edbi:query-editor-history-list
+             (> edbi:history-index 0))
+    (setq edbi:history-index (1- edbi:history-index))
+    (erase-buffer)
+    (insert 
+     (cond
+      ((= 0 edbi:history-index) edbi:history-current)
+      (t (nth edbi:history-index edbi:query-editor-history-list))))
+    (message "Query history : [%s/%s]" 
+             edbi:history-index
+             (length edbi:query-editor-history-list))))
+
+(defun edbi:dbview-query-editor-history-add (sql)
+  "[internal] Add current SQL into history. This function assumes
+that the current buffer is the query editor buffer."
+  (push sql edbi:query-editor-history-list)
+  (setq edbi:query-editor-history-list
+        (loop for i in edbi:query-editor-history-list
+              for idx from 0 below edbi:query-editor-history-max-num
+              collect i)))
+
+(defun edbi:dbview-query-editor-history-reset-index ()
+  "[internal] Reset the history counter `edbi:history-index'."
+  (setq edbi:history-index 0))
+
 
 (defun edbi:dbview-query-editor-create-buffer (conn &optional force-create-p)
   "[internal] Create a buffer for query editor."
@@ -726,7 +771,9 @@ CONNECTION-INFO is a list of strings: (data_source username auth)."
              (buf (get-buffer-create buf-name)))
         (with-current-buffer buf
           (edbi:sql-mode)
-          (set (make-local-variable 'edbi:buffer-id) uid))
+          (set (make-local-variable 'edbi:buffer-id) uid)
+          (set (make-local-variable 'edbi:history-index) 0)
+          (set (make-local-variable 'edbi:history-current) nil))
         (edbi:connection-buffers-set conn (cons buf buf-list))
         buf)))))
 
@@ -777,6 +824,7 @@ CONNECTION-INFO is a list of strings: (data_source username auth)."
   (when edbi:connection
     (let ((sql (buffer-substring-no-properties (point-min) (point-max)))
           (result-buf edbi:result-buffer))
+      (edbi:dbview-query-editor-history-reset-index)
       (unless (and result-buf (buffer-live-p result-buf))
         (setq result-buf (edbi:dbview-query-result-get-buffer (current-buffer)))
         (setq edbi:result-buffer result-buf))
@@ -794,6 +842,7 @@ CONNECTION-INFO is a list of strings: (data_source username auth)."
          (cond
           ;; SELECT
           ((or (equal "0E0" exec-result) (equal -1 exec-result))
+           (edbi:dbview-query-editor-history-add sql)
            (lexical-let (rows header)
              (edbi:seq
               (rows <- (edbi:fetch-d conn))
@@ -805,7 +854,9 @@ CONNECTION-INFO is a list of strings: (data_source username auth)."
           ((null exec-result)
            (edbi:dbview-query-result-error ds conn result-buf))
           ;; UPDATE etc
-          (t (edbi:dbview-query-result-text ds result-buf exec-result)))))
+          (t 
+           (edbi:dbview-query-editor-history-add sql)
+           (edbi:dbview-query-result-text ds result-buf exec-result)))))
       (deferred:error it
         (lambda (err) (message "ERROR : %S" err))))))
 
