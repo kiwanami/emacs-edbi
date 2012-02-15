@@ -239,10 +239,64 @@ CONNECTION-INFO is a list of strings: (data_source username auth)."
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;; User Interface
 
-(defun edbi:dialog-data-source-buffer (data-source on-ok-func 
-                                                   &optional password-show error-msg)
+(defvar edbi:ds-history-file (expand-file-name ".edbi-ds-history" user-emacs-directory) "Data source history file.")
+(defvar edbi:ds-history-list-num 10 "Maximum history number.")
+
+(defvar edbi:ds-history-list nil "[internal] data source history.")
+
+(defun edbi:ds-history-add (ds)
+  "[internal] Add the given data source into `edbi:ds-history-list'. This function truncates the list, if the length of the list is more than `edbi:ds-history-list-num'."
+  (let ((dsc (edbi:data-source
+              (edbi:data-source-uri ds)
+              (edbi:data-source-username ds) "")))
+    (when (loop for i in edbi:ds-history-list
+                if (equal (edbi:data-source-uri i)
+                          (edbi:data-source-uri dsc))
+                return nil
+                finally return t)
+      (push dsc edbi:ds-history-list))
+    (setq edbi:ds-history-list
+          (loop for i in edbi:ds-history-list
+                for idx from 0 below (min (length edbi:ds-history-list)
+                                          edbi:ds-history-list-num)
+                collect i))
+    (edbi:ds-history-save)))
+
+(defun edbi:ds-history-save ()
+  "[internal] Save the data source history `edbi:ds-history-list' into the file `edbi:ds-history-file'."
+  (let* ((file (expand-file-name edbi:ds-history-file))
+         (coding-system-for-write 'utf-8)
+         after-save-hook before-save-hook
+         (buf (find-file-noselect file)))
+    (unwind-protect
+        (with-current-buffer buf
+          (set-visited-file-name nil)
+          (buffer-disable-undo)
+          (erase-buffer)
+          (insert 
+           (prin1-to-string edbi:ds-history-list))
+          (write-region (point-min) (point-max) file nil 'ok))
+      (kill-buffer buf)))
+  nil)
+
+(defun edbi:ds-history-load ()
+  "[internal] Read the data source history file and store the data into `edbi:ds-history-list'."
+  (let* ((coding-system-for-read 'utf-8)
+         (file (expand-file-name edbi:ds-history-file)))
+    (when (file-exists-p file)
+      (let ((buf (find-file-noselect file)) ret)
+        (unwind-protect
+            (setq ret (loop for i in (read buf)
+                            collect 
+                            (edbi:data-source (car i) (nth 1 i) "")))
+          (kill-buffer buf))
+        (setq edbi:ds-history-list ret)))))
+
+
+(defun edbi:dialog-ds-buffer (data-source on-ok-func 
+                                          &optional password-show error-msg)
   "[internal] Create and return the editing buffer for the given DATA-SOURCE."
-  (let ((buf (get-buffer-create "*edbi-dialog-data-source*")))
+  (let ((buf (get-buffer-create "*edbi-dialog-ds*")))
     (with-current-buffer buf
       (let ((inhibit-read-only t)) (erase-buffer))
       (kill-all-local-variables)
@@ -257,7 +311,7 @@ CONNECTION-INFO is a list of strings: (data_source username auth)."
         (widget-insert "\n\n"))
       (lexical-let 
           ((data-source data-source) (on-ok-func on-ok-func) (error-msg error-msg)
-           fdata-source fusername fauth cbshow fields)
+           fdata-source fusername fauth cbshow menu-history fields)
         ;; create dialog fields
         (setq fdata-source
               (widget-create
@@ -284,18 +338,35 @@ CONNECTION-INFO is a list of strings: (data_source username auth)."
                     'username fusername 'auth fauth 
                     'password-show cbshow))
 
+        ;; history
+        (widget-insert "\n")
+        (setq menu-history
+              (widget-create 
+               'menu-choice
+               :format "    %[%t%] : %v"
+               :tag "History"
+               :help-echo "Click to choose a history."
+               :value data-source
+               :args
+               (cons '(item :tag "(not selected)" :value (nil nil nil))
+                     (loop for i in edbi:ds-history-list
+                           collect
+                           (list 'item ':tag
+                                 (format "[%s]" (edbi:data-source-uri i))
+                                 ':value i)))))
+
         ;; OK / Cancel
         (widget-insert "\n")
         (widget-create 
          'push-button
          :notify (lambda (&rest ignore)
-                   (edbi:dialog-data-source-commit data-source fields on-ok-func))
+                   (edbi:dialog-ds-commit data-source fields on-ok-func))
          "Ok")
         (widget-insert " ")
         (widget-create
          'push-button
          :notify (lambda (&rest ignore)
-                   (edbi:dialog-data-source-kill-buffer))
+                   (edbi:dialog-ds-kill-buffer))
          "Cancel")
         (widget-insert "\n")
 
@@ -313,6 +384,13 @@ CONNECTION-INFO is a list of strings: (data_source username auth)."
                          (current-buffer)
                          current-ds on-ok-func password-show error-msg)
                         (widget-forward 3))))
+        (widget-put menu-history
+                    :notify 
+                    (lambda (widget &rest ignore)
+                        (edbi:dialog-replace-buffer-window
+                         (current-buffer)
+                         (widget-value widget) on-ok-func (widget-value cbshow))
+                        (widget-forward 4)))
 
         ;; setup widgets
         (use-local-map widget-keymap)
@@ -321,7 +399,7 @@ CONNECTION-INFO is a list of strings: (data_source username auth)."
         (widget-forward 1)))
     buf))
 
-(defun edbi:dialog-data-source-cbshow (data-source fields on-ok-func)
+(defun edbi:dialog-ds-cbshow (data-source fields on-ok-func)
   "[internal] Click action for the checkbox of [show auth]."
   (let ((current-ds
          (edbi:data-source
@@ -334,7 +412,7 @@ CONNECTION-INFO is a list of strings: (data_source username auth)."
      current-ds on-ok-func password-show error-msg)
     (widget-forward 3)))
 
-(defun edbi:dialog-data-source-commit (data-source fields on-ok-func)
+(defun edbi:dialog-ds-commit (data-source fields on-ok-func)
   "[internal] Click action for the [OK] button."
   (let ((uri-value (widget-value (plist-get fields 'data-source))))
     (cond
@@ -351,6 +429,7 @@ CONNECTION-INFO is a list of strings: (data_source username auth)."
              uri-value
              (widget-value (plist-get fields 'username))
              (widget-value (plist-get fields 'auth))))
+      (edbi:ds-history-add data-source)
       (let ((msg (funcall on-ok-func data-source)))
         (if msg 
             (edbi:dialog-replace-buffer-window
@@ -358,9 +437,9 @@ CONNECTION-INFO is a list of strings: (data_source username auth)."
              data-source on-ok-func
              (widget-value (plist-get fields 'password-show))
              (format "Connection Error : %s" msg))
-          (edbi:dialog-data-source-kill-buffer)))))))
+          (edbi:dialog-ds-kill-buffer)))))))
 
-(defun edbi:dialog-data-source-kill-buffer ()
+(defun edbi:dialog-ds-kill-buffer ()
   "[internal] Kill dialog buffer."
   (interactive)
   (let ((cbuf (current-buffer))
@@ -376,9 +455,9 @@ CONNECTION-INFO is a list of strings: (data_source username auth)."
                                                    &optional password-show error-msg)
   "[internal] Kill the previous dialog buffer and create new dialog buffer."
   (let ((win (get-buffer-window prev-buf)) new-buf)
-    (edbi:dialog-data-source-kill-buffer)
+    (edbi:dialog-ds-kill-buffer)
     (setq new-buf
-          (edbi:dialog-data-source-buffer
+          (edbi:dialog-ds-buffer
            data-source on-ok-func password-show error-msg))
     (cond
      ((or (null win) (not (window-live-p win)))
@@ -388,11 +467,12 @@ CONNECTION-INFO is a list of strings: (data_source username auth)."
       (set-buffer new-buf)))
     new-buf))
 
-(defun edbi:dialog-data-source-open (on-ok-func)
+(defun edbi:dialog-ds-open (on-ok-func)
   "[internal] Display a dialog for data source information."
   (setq edbi:dialog-before-win-num (length (window-list)))
+  (edbi:ds-history-load)
   (pop-to-buffer
-   (edbi:dialog-data-source-buffer
+   (edbi:dialog-ds-buffer
     (edbi:data-source nil) on-ok-func)))
 
 (defface edbi:face-title
@@ -437,7 +517,7 @@ CONNECTION-INFO is a list of strings: (data_source username auth)."
               ((null msg)
                (deferred:call 'edbi:dbview-open data-source conn) nil)
               (t msg))))))
-    (edbi:dialog-data-source-open connection-func)))
+    (edbi:dialog-ds-open connection-func)))
 
 (defvar edbi:dbview-buffer-name "*edbi-dbviewer*" "[internal] Database buffer name.")
 
