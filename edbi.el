@@ -347,11 +347,12 @@ CONNECTION-INFO is a list of strings: (data_source username auth)."
           (kill-buffer buf))
         (setq edbi:ds-history-list ret)))))
 
+(defvar edbi:dialog-buffer-name "*edbi-dialog-ds*" "[internal] edbi:dialog-buffer-name.")
 
 (defun edbi:dialog-ds-buffer (data-source on-ok-func 
                                           &optional password-show error-msg)
   "[internal] Create and return the editing buffer for the given DATA-SOURCE."
-  (let ((buf (get-buffer-create "*edbi-dialog-ds*")))
+  (let ((buf (get-buffer-create edbi:dialog-buffer-name)))
     (with-current-buffer buf
       (let ((inhibit-read-only t)) (erase-buffer))
       (kill-all-local-variables)
@@ -567,7 +568,7 @@ CONNECTION-INFO is a list of strings: (data_source username auth)."
                          (setq conn (edbi:start))
                          (edbi:connect conn data-source)
                          nil)
-                     (error (setq (format "%s" msg)))))
+                     (error (format "%s" err))))
              (cond
               ((null msg)
                (deferred:call 'edbi:dbview-open data-source conn) nil)
@@ -598,7 +599,10 @@ CONNECTION-INFO is a list of strings: (data_source username auth)."
                    'face 'edbi:face-header))))
 
 (defun edbi:dbview-open (data-source conn)
-  "[internal] "
+  "[internal] Start EPC conversation with the DB to open the DB Viewer buffer."
+  (let ((buf (get-buffer edbi:dbview-buffer-name)))
+    (when (and buf (buffer-live-p buf))
+      (kill-buffer buf)))
   (with-current-buffer (get-buffer-create edbi:dbview-buffer-name)
     (let (buffer-read-only)
       (erase-buffer)
@@ -615,7 +619,7 @@ CONNECTION-INFO is a list of strings: (data_source username auth)."
        (edbi:dbview-create-buffer data-source conn results)))))
 
 (defun edbi:dbview-create-buffer (data-source conn results)
-  "[internal] "
+  "[internal] Render the DB Viewer buffer with the result data."
   (let* ((buf (get-buffer-create edbi:dbview-buffer-name))
          (hrow (and results (car results)))
          (rows (and results (cadr results)))
@@ -625,12 +629,13 @@ CONNECTION-INFO is a list of strings: (data_source username auth)."
                      with type-f    = (edbi:column-selector hrow "TABLE_TYPE")
                      with remarks-f = (edbi:column-selector hrow "REMARKS")
                      for row in rows
-                     for catalog = (funcall catalog-f row)
-                     for schema  = (funcall schema-f row)
+                     for catalog = (or (funcall catalog-f row) "")
+                     for schema  = (or (funcall schema-f row) "")
                      for type    = (funcall type-f row)
                      for table   = (funcall table-f row)
                      for remarks = (funcall remarks-f row)
-                     unless (string-match "\\(INDEX\\|SYSTEM\\)" type)
+                     unless (or (string-match "\\(INDEX\\|SYSTEM\\)" type)
+                                (string-match "\\(information_schema\\|SYSTEM\\)" schema))
                      collect
                      (list (concat catalog schema) table type (or remarks "")
                            (list catalog schema table)))) table-cp)
@@ -659,6 +664,7 @@ CONNECTION-INFO is a list of strings: (data_source username auth)."
   (defmacro edbi:dbview-with-cp (&rest body)
     `(let ((cp (ctbl:cp-get-component)))
        (when cp
+         (ctbl:cp-set-selected-cell cp (ctbl:cursor-to-nearest-cell))
          (let ((table (car (last (ctbl:cp-get-selected-data-row cp)))))
            ,@body)))))
 
@@ -852,11 +858,12 @@ that the current buffer is the query editor buffer."
     (switch-to-buffer buf)
     (when executep
       (with-current-buffer buf
-        (edbi:dbview-query-editor-execute-command)))))
+        (edbi:dbview-query-editor-execute-command)))
+    buf))
 
-(defun edbi:dbview-query-result-get-buffer (buf)
+(defun edbi:dbview-query-result-get-buffer (editor-buf)
   "[internal] "
-  (let* ((uid (buffer-local-value 'edbi:buffer-id buf))
+  (let* ((uid (buffer-local-value 'edbi:buffer-id editor-buf))
          (rbuf-name (format "*edbi:query-result %s" uid))
          (rbuf (get-buffer rbuf-name)))
     (unless rbuf
