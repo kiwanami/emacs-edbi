@@ -598,6 +598,8 @@ CONNECTION-INFO is a list of strings: (data_source username auth)."
        (propertize (format "[%s items]\n" (length items))
                    'face 'edbi:face-header))))
 
+(defvar edbi:dbview-update-hook nil "This hook is called after rendering the dbview buffer. The hook function should have two arguments: `edbi:data-source' and `edbi:connection'")
+
 (defun edbi:dbview-open (data-source conn)
   "[internal] Start EPC conversation with the DB to open the DB Viewer buffer."
   (let ((buf (get-buffer edbi:dbview-buffer-name)))
@@ -616,7 +618,9 @@ CONNECTION-INFO is a list of strings: (data_source username auth)."
     (edbi:seq
      (results <- (edbi:table-info-d conn nil nil nil nil))
      (lambda (x) 
-       (edbi:dbview-create-buffer data-source conn results)))))
+       (edbi:dbview-create-buffer data-source conn results))
+     (lambda (x) 
+       (run-hook-with-args 'edbi:dbview-update-hook data-source conn)))))
 
 (defun edbi:dbview-create-buffer (data-source conn results)
   "[internal] Render the DB Viewer buffer with the result data."
@@ -1188,13 +1192,12 @@ that the current buffer is the query editor buffer."
   (make-variable-buffer-local 'edbi:ac-editor-table-candidate-cache)
   (make-variable-buffer-local 'edbi:ac-editor-column-candidate-cache)
   (add-hook 'edbi:sql-mode-hook 'edbi:ac-edbi:sql-mode-hook)
+  (add-hook 'edbi:dbview-update-hook 'edbi:ac-editor-word-candidate-update)
   (unless (memq 'edbi:sql-mode ac-modes)
     (setq ac-modes 
           (cons 'edbi:sql-mode ac-modes))))
 
-
 (defun edbi:ac-edbi:sql-mode-hook ()
-  (edbi:ac-editor-word-candidate-update)
   (make-local-variable 'ac-sources)
   (setq ac-sources '(ac-source-words-in-same-mode-buffers
                      ac-source-edbi:tables
@@ -1208,22 +1211,19 @@ that the current buffer is the query editor buffer."
   "Auto complete candidate function."
   edbi:ac-editor-column-candidate-cache)
 
-(defun edbi:ac-editor-word-candidate-update ()
+(defun edbi:ac-editor-word-candidate-update (data-source conn)
   "[internal] "
-  (when edbi:connection
-    (lexical-let ((conn edbi:connection) (buf (current-buffer))
-                  table-info column-info)
-      (deferred:$
-        (deferred:wait 200)
-        (cc:semaphore-with edbi:dbview-query-execute-semaphore
-          (lambda (x) 
-            (edbi:seq
-             (table-info <- (edbi:table-info-d conn nil nil nil nil))
-             (column-info <- (edbi:column-info-d conn nil nil nil nil))
-             (lambda (x) 
-               (edbi:ac-editor-word-candidate-update1 buf table-info column-info)))))))))
+  (lexical-let ((conn conn) table-info column-info)
+    (deferred:$
+      (cc:semaphore-with edbi:dbview-query-execute-semaphore
+        (lambda (x) 
+          (edbi:seq
+           (table-info <- (edbi:table-info-d conn nil nil nil nil))
+           (column-info <- (edbi:column-info-d conn nil nil nil nil))
+           (lambda (x) 
+             (edbi:ac-editor-word-candidate-update1 table-info column-info))))))))
 
-(defun edbi:ac-editor-word-candidate-update1 (buf table-info column-info)
+(defun edbi:ac-editor-word-candidate-update1 (table-info column-info)
   "[internal] "
   (let (tables)
   (setq edbi:ac-editor-table-candidate-cache
