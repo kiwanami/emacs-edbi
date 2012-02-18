@@ -171,25 +171,33 @@
 
 (defun edbi:connection (epc-mngr)
   "Create an `edbi:connection' object."
-  (list epc-mngr nil))
+  (list epc-mngr nil nil))
 
 (defsubst edbi:connection-mngr (conn)
   "Return the `epc:manager' object."
   (car conn))
 
+(defsubst edbi:connection-ds (conn)
+  "Return the `edbi:data-source' object."
+  (nth 1 conn))
+
+(defun edbi:connection-ds-set (conn ds)
+  "[internal] Store data-source object at CONN object."
+  (setf (nth 1 conn) ds))
+
 (defun edbi:connection-buffers (conn)
   "Return the buffer list of query editors."
-  (let ((buf-list (nth 1 conn)))
+  (let ((buf-list (nth 2 conn)))
     (setq buf-list
           (loop for i in buf-list
                 if (buffer-live-p i)
                 collect i))
-    (setf (nth 1 conn) buf-list)
+    (setf (nth 2 conn) buf-list)
     buf-list))
 
 (defun edbi:connection-buffers-set (conn buffer-list)
-  "Store BUFFER-LIST in CONN object."
-  (setf (nth 1 conn) buffer-list))
+  "[internal] Store BUFFER-LIST at CONN object."
+  (setf (nth 2 conn) buffer-list))
 
 
 
@@ -197,12 +205,11 @@
 
 (defun edbi:start ()
   "Start the EPC process. This function returns an `edbi:connection' object."
-  (edbi:connection 
+  (edbi:connection
    (epc:start-epc (car edbi:driver-info) (cdr edbi:driver-info))))
 
 (defun edbi:finish (conn)
   "Terminate the EPC process."
-  ;; TODO close buffers
   (epc:stop-epc (edbi:connection-mngr conn)))
 
 
@@ -267,6 +274,9 @@ CONNECTION-INFO is a list of strings: (data_source username auth)."
   "Return a list of `err' code, `errstr' and `state'."
   (epc:call-deferred (edbi:connection-mngr conn) 'status nil))
 
+(defun edbi:type-info-all-d (conn)
+  "Return a list of type info."
+  (epc:call-deferred (edbi:connection-mngr conn) 'type-info-all nil))
 
 (defun edbi:table-info-d (conn catalog schema table type)
   "Return a table info as (COLUMN-LIST ROW-LIST)."
@@ -678,6 +688,21 @@ CONNECTION-INFO is a list of strings: (data_source username auth)."
     (edbi:dbview-with-cp
      (when (and conn (y-or-n-p "Quit and disconnect DB ? "))
        (edbi:finish conn)
+       (when (and (edbi:connection-buffers conn)
+                  (y-or-n-p "Kill all query and result buffers ? "))
+         ;; kill tabledef buffer
+         (let ((table-buf (get-buffer edbi:dbview-table-buffer-name)))
+           (when (and table-buf (buffer-live-p table-buf))
+             (kill-buffer table-buf)))
+         ;; kill editor and result buffers
+         (ignore-errors
+           (loop for b in (edbi:connection-buffers conn)
+                 if (and b (buffer-live-p b))
+                 do 
+                 (let ((rbuf (buffer-local-value 'edbi:result-buffer b)))
+                   (when (and rbuf (kill-buffer rbuf))))
+                 (kill-buffer b))))
+       ;; kill db view buffer
        (kill-buffer (current-buffer))))))
 
 (defun edbi:dbview-update-command ()
@@ -1183,14 +1208,19 @@ that the current buffer is the query editor buffer."
   "Initialization for auto-complete."
   (ac-define-source edbi:tables
     '((candidates . edbi:ac-editor-table-candidates)
-      (symbol . "t")))
+      (symbol . "T")))
   (ac-define-source edbi:columns
     '((candidates . edbi:ac-editor-column-candidates)
-      (symbol . "c")))
+      (symbol . "C")))
+  (ac-define-source edbi:types
+    '((candidates . edbi:ac-editor-type-candidates)
+      (symbol . "+")))
   (defvar edbi:ac-editor-table-candidate-cache nil  "[internal] Word cache for auto-complete.")
   (defvar edbi:ac-editor-column-candidate-cache nil  "[internal] Word cache for auto-complete.")
+  (defvar edbi:ac-editor-type-candidate-cache nil  "[internal] Word cache for auto-complete.")
   (make-variable-buffer-local 'edbi:ac-editor-table-candidate-cache)
   (make-variable-buffer-local 'edbi:ac-editor-column-candidate-cache)
+  (make-variable-buffer-local 'edbi:ac-editor-type-candidate-cache)
   (add-hook 'edbi:sql-mode-hook 'edbi:ac-edbi:sql-mode-hook)
   (add-hook 'edbi:dbview-update-hook 'edbi:ac-editor-word-candidate-update)
   (unless (memq 'edbi:sql-mode ac-modes)
@@ -1201,7 +1231,8 @@ that the current buffer is the query editor buffer."
   (make-local-variable 'ac-sources)
   (setq ac-sources '(ac-source-words-in-same-mode-buffers
                      ac-source-edbi:tables
-                     ac-source-edbi:columns)))
+                     ac-source-edbi:columns
+                     ac-source-edbi:types)))
 
 (defun edbi:ac-editor-table-candidates ()
   "Auto complete candidate function."
@@ -1211,65 +1242,81 @@ that the current buffer is the query editor buffer."
   "Auto complete candidate function."
   edbi:ac-editor-column-candidate-cache)
 
+(defun edbi:ac-editor-type-candidates ()
+  "Auto complete candidate function."
+  edbi:ac-editor-type-candidate-cache)
+
 (defun edbi:ac-editor-word-candidate-update (data-source conn)
   "[internal] "
-  (lexical-let ((conn conn) table-info column-info)
+  (lexical-let ((conn conn) table-info column-info type-info)
     (deferred:$
       (cc:semaphore-with edbi:dbview-query-execute-semaphore
         (lambda (x) 
           (edbi:seq
            (table-info <- (edbi:table-info-d conn nil nil nil nil))
            (column-info <- (edbi:column-info-d conn nil nil nil nil))
+           (type-info <- (edbi:type-info-all-d conn))
            (lambda (x) 
-             (edbi:ac-editor-word-candidate-update1 table-info column-info))))))))
+             (edbi:ac-editor-word-candidate-update1 
+              table-info column-info type-info))))))))
 
-(defun edbi:ac-editor-word-candidate-update1 (table-info column-info)
+(defun edbi:ac-editor-word-candidate-update1 (table-info column-info type-info)
   "[internal] "
   (let (tables)
-  (setq edbi:ac-editor-table-candidate-cache
-         (loop 
-          with hrow = (and table-info (car table-info))
-          with rows = (and table-info (cadr table-info))
-          with catalog-f = (edbi:column-selector hrow "TABLE_CAT")
-          with schema-f  = (edbi:column-selector hrow "TABLE_SCHEM")
-          with table-f   = (edbi:column-selector hrow "TABLE_NAME")
-          with type-f    = (edbi:column-selector hrow "TABLE_TYPE")
-          with remarks-f = (edbi:column-selector hrow "REMARKS")
-          for row in rows
-          for catalog = (funcall catalog-f row)
-          for schema  = (funcall schema-f row)
-          for type    = (or (funcall type-f row) "")
-          for table   = (funcall table-f row)
-          for remarks = (or (funcall remarks-f row) "")
-          if (and table (not (string-match "\\(INDEX\\|SYSTEM\\)" type)))
-          collect
-          (progn
-            (push table tables)
-            (cons (propertize table 'summary type 'document (format "%s\n%s" type remarks))
-                  table))))
-  (setq edbi:ac-editor-column-candidate-cache
-         (loop
-          with hrow = (and column-info (car column-info))
-          with rows = (and column-info (cadr column-info))
-          with table-name-f  = (edbi:column-selector hrow "TABLE_NAME")
-          with column-name-f = (edbi:column-selector hrow "COLUMN_NAME")
-          with type-name-f   = (edbi:column-selector hrow "TYPE_NAME")
-          with column-size-f = (edbi:column-selector hrow "COLUMN_SIZE")
-          with nullable-f    = (edbi:column-selector hrow "NULLABLE")
-          with remarks-f     = (edbi:column-selector hrow "REMARKS")
-          for row in rows
-          for table-name  = (funcall table-name-f row)
-          for column-name = (funcall column-name-f row)
-          for type-name   = (funcall type-name-f row)
-          for column-size = (or (funcall column-size-f row) "")
-          for nullable    = (if (equal 0 (funcall nullable-f row)) "NOT NULL" "")
-          for remarks     = (or (funcall remarks-f row) "")
-          if (and column-name (member table-name tables))
-          collect
-          (cons (propertize column-name 'summary table-name
-                            'document (format "%s %s %s\n%s" type-name
-                                              column-size nullable remarks))
-           column-name)))))
+    (setq edbi:ac-editor-table-candidate-cache
+          (loop 
+           with hrow = (and table-info (car table-info))
+           with rows = (and table-info (cadr table-info))
+           with catalog-f = (edbi:column-selector hrow "TABLE_CAT")
+           with schema-f  = (edbi:column-selector hrow "TABLE_SCHEM")
+           with table-f   = (edbi:column-selector hrow "TABLE_NAME")
+           with type-f    = (edbi:column-selector hrow "TABLE_TYPE")
+           with remarks-f = (edbi:column-selector hrow "REMARKS")
+           for row in rows
+           for catalog = (funcall catalog-f row)
+           for schema  = (funcall schema-f row)
+           for type    = (or (funcall type-f row) "")
+           for table   = (funcall table-f row)
+           for remarks = (or (funcall remarks-f row) "")
+           if (and table (not (string-match "\\(INDEX\\|SYSTEM\\)" type)))
+           collect
+           (progn
+             (push table tables)
+             (cons (propertize table 'summary type 'document (format "%s\n%s" type remarks))
+                   table))))
+    (setq edbi:ac-editor-column-candidate-cache
+          (loop
+           with hrow = (and column-info (car column-info))
+           with rows = (and column-info (cadr column-info))
+           with table-name-f  = (edbi:column-selector hrow "TABLE_NAME")
+           with column-name-f = (edbi:column-selector hrow "COLUMN_NAME")
+           with type-name-f   = (edbi:column-selector hrow "TYPE_NAME")
+           with column-size-f = (edbi:column-selector hrow "COLUMN_SIZE")
+           with nullable-f    = (edbi:column-selector hrow "NULLABLE")
+           with remarks-f     = (edbi:column-selector hrow "REMARKS")
+           for row in rows
+           for table-name  = (funcall table-name-f row)
+           for column-name = (funcall column-name-f row)
+           for type-name   = (funcall type-name-f row)
+           for column-size = (or (funcall column-size-f row) "")
+           for nullable    = (if (equal 0 (funcall nullable-f row)) "NOT NULL" "")
+           for remarks     = (or (funcall remarks-f row) "")
+           if (and column-name (member table-name tables))
+           collect
+           (cons (propertize column-name 'summary table-name
+                             'document (format "%s %s %s\n%s" type-name
+                                               column-size nullable remarks))
+                 column-name)))
+    (when type-info
+      (let ((name-col (loop for (sym . i) in (car type-info)
+                            if (equal sym "TYPE_NAME") return i)))
+        (when name-col
+          (setq edbi:ac-editor-type-candidate-cache
+                (loop for type-row in (cdr type-info)
+                      for name = (nth name-col type-row)
+                      collect 
+                      (cons (propertize name 'summary "TYPE") name))))))
+    ))
 
 (eval-after-load 'auto-complete
   '(progn

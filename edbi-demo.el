@@ -1,10 +1,18 @@
 (require edbi)
 
-;; start
-(setq conn1 (edbi:start))
-
 ;; connect
+(setq conn1 (edbi:start))
 (edbi:connect conn1 '("dbi:SQLite:dbname=./test.sqlite" "" ""))
+
+;; create table
+(edbi:sync edbi:do-d conn1
+   "create table test (
+id integer primary key autoincrement,
+name varchar(64) not null,
+comment text)")
+
+;; drop table
+(edbi:sync edbi:do-d conn1 "drop table test")
 
 ;; select
 (ctbl:popup-table-buffer-easy
@@ -57,6 +65,20 @@
    (b <- (edbi:liftd caar (edbi:select-all-d conn1 "select count(id) from test")))
    (edbi:auto-commit-d conn1 "true")
    (lambda (x) (message "result %S %S" a b))))
+
+;; type info all
+(lexical-let (results (conn1 conn1))
+  (edbi:seq
+   (results <- (edbi:type-info-all-d conn1))
+   (lambda (x) 
+     (cond
+      ((null results) (message "No type info"))
+      (t
+       (ctbl:popup-table-buffer-easy 
+        (cdr results) 
+        (loop for i from 0 below (length (car results))
+              collect (loop for (sym . j) in (car results)
+                            if (eql j i) return sym))))))))
 
 ;; table info
 (lexical-let (results (conn1 conn1))

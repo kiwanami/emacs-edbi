@@ -106,6 +106,13 @@ sub edbi_status {
   return [$dbh->err, $dbh->errstr, $dbh->state];
 }
 
+sub edbi_type_info_all {
+  return undef unless $dbh;
+  my $ret = $dbh->type_info_all;
+  print STDERR Dumper $ret;
+  return $dbh->type_info_all;
+}
+
 sub edbi_table_info {
   return undef unless $dbh;
   eval {
@@ -168,6 +175,7 @@ sub main {
      'rollback' => [\&edbi_rollback, "", ""],
      'disconnect' => [\&edbi_disconnect, "", ""],
      'status' => [\&edbi_status, "", ""],
+     'type-info-all' => [\&edbi_type_info_all, "", ""],
      'table-info' => [\&edbi_table_info, "catalog, schema, table, type", ""],
      'column-info' => [\&edbi_column_info, "catalog, schema, table, column", ""],
      'primary-key-info' => [\&edbi_primary_key_info, "catalog, schema, table", ""],
