@@ -1287,12 +1287,12 @@ that the current buffer is the query editor buffer."
            (type-info <- (edbi:type-info-all-d conn))
            (lambda (x) 
              (edbi:ac-editor-word-candidate-update1 
-              table-info column-info type-info))))))))
+              conn table-info column-info type-info))))))))
 
-(defun edbi:ac-editor-word-candidate-update1 (table-info column-info type-info)
+(defun edbi:ac-editor-word-candidate-update1 (conn table-info column-info type-info)
   "[internal] "
-  (let (tables)
-    (setq edbi:ac-editor-table-candidate-cache
+  (let (tables table-candidates column-candidates type-candidates)
+    (setq table-candidates
           (loop 
            with hrow = (and table-info (car table-info))
            with rows = (and table-info (cadr table-info))
@@ -1313,7 +1313,7 @@ that the current buffer is the query editor buffer."
              (push table tables)
              (cons (propertize table 'summary type 'document (format "%s\n%s" type remarks))
                    table))))
-    (setq edbi:ac-editor-column-candidate-cache
+    (setq column-candidates
           (loop
            with hrow = (and column-info (car column-info))
            with rows = (and column-info (cadr column-info))
@@ -1340,12 +1340,17 @@ that the current buffer is the query editor buffer."
       (let ((name-col (loop for (sym . i) in (car type-info)
                             if (equal sym "TYPE_NAME") return i)))
         (when name-col
-          (setq edbi:ac-editor-type-candidate-cache
+          (setq type-candidates
                 (loop for type-row in (cdr type-info)
                       for name = (nth name-col type-row)
                       collect 
                       (cons (propertize name 'summary "TYPE") name))))))
-    ))
+    (loop for buf in (edbi:connection-buffers conn)
+          do (with-current-buffer buf
+               (setq edbi:ac-editor-table-candidate-cache table-candidates
+                     edbi:ac-editor-column-candidate-cache column-candidates
+         p            edbi:ac-editor-type-candidate-cache type-candidates)))
+    nil))
 
 (eval-after-load 'auto-complete
   '(progn
