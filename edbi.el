@@ -315,6 +315,169 @@ The programmer should be aware of the internal state so as not to break the stat
                      (list pk-catalog pk-schema pk-table 
                            fk-catalog fk-schema fk-table)))
 
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; DB Driver Abstraction
+
+;; [edbi:dbd structure]
+;;
+;;   name               : driver name
+;;   table-info-args    : a function that receives an `edbi:connection' object 
+;;                        and returns a list for the arguments of `edbi:table-info-d'.
+;;   table-info-filter  : a function that receives the return value of `edbi:table-info-d' 
+;;                        and returns a filtered list (catalog schema table-name type remarks).
+;;   column-info-args   : argument function for `edbi:column-info-d'.
+;;   column-info-filter : filter function for `edbi:column-info-d'.
+;;                        this function returns a list of 
+;;                        (table-name column-name type-name column-size nullable remarks)
+;;   type-info-filter   : filter function for `edbi:type-info-all-d'.
+;;                        this function returns a list of type-name.
+;;   limit-format       : a format string for the limited select statement.
+
+(defstruct edbi:dbd name table-info-args table-info-filter
+  column-info-args column-info-filter type-info-filter limit-format)
+
+(defvar edbi:dbd-alist nil "[internal] List of the dbd name and `edbi:dbd' object.")
+(defvar edbi:dbd-default nil "[internal] Default `edbi:dbd' object.")
+
+(defun edbi:dbd-register (dbd)
+  "Register the `edbi:dbd' object to `edbi:dbd-alist'."
+  (let ((name (edbi:dbd-name dbd)))
+    (setq edbi:dbd-alist 
+          (loop for i in edbi:dbd-alist
+                unless (equal (car i) name) collect i))
+    (push (cons name dbd) edbi:dbd-alist))
+  edbi:dbd-alist)
+
+(defun edbi:dbd-get (conn)
+  "[internal] Return the `edbi:dbd' object for CONN."
+  (let* ((uri (edbi:data-source-uri (edbi:connection-ds conn)))
+         (ps (string-match "^dbi:[^:]+" uri)) ret)
+    (when ps
+      (let ((name (match-string 0 uri)))
+        (setq ret (cdr (assoc name edbi:dbd-alist)))))
+    (unless ret
+      (setq ret edbi:dbd-default))
+    ret))
+
+(defun edbi:dbd-default-table-info-filter (table-info)
+  "[internal] Default table name filter."
+  (loop 
+   with hrow = (and table-info (car table-info))
+   with rows = (and table-info (cadr table-info))
+   with catalog-f = (edbi:column-selector hrow "TABLE_CAT")
+   with schema-f  = (edbi:column-selector hrow "TABLE_SCHEM")
+   with table-f   = (edbi:column-selector hrow "TABLE_NAME")
+   with type-f    = (edbi:column-selector hrow "TABLE_TYPE")
+   with remarks-f = (edbi:column-selector hrow "REMARKS")
+   for row in rows
+   for catalog = (funcall catalog-f row)
+   for schema  = (funcall schema-f row)
+   for type    = (or (funcall type-f row) "")
+   for table   = (funcall table-f row)
+   for remarks = (or (funcall remarks-f row) "")
+   if (and table (not (or (string-match "\\(INDEX\\|SYSTEM\\)" type)
+                          (string-match "\\(information_schema\\|SYSTEM\\)" schema))))
+   collect (list catalog schema table type remarks)))
+
+(defun edbi:dbd-default-column-info-filter (column-info tables)
+  "[internal] Default column name filter."
+  (loop
+   with hrow = (and column-info (car column-info))
+   with rows = (and column-info (cadr column-info))
+   with table-name-f  = (edbi:column-selector hrow "TABLE_NAME")
+   with column-name-f = (edbi:column-selector hrow "COLUMN_NAME")
+   with type-name-f   = (edbi:column-selector hrow "TYPE_NAME")
+   with column-size-f = (edbi:column-selector hrow "COLUMN_SIZE")
+   with nullable-f    = (edbi:column-selector hrow "NULLABLE")
+   with remarks-f     = (edbi:column-selector hrow "REMARKS")
+   for row in rows
+   for table-name  = (funcall table-name-f row)
+   for column-name = (funcall column-name-f row)
+   for type-name   = (funcall type-name-f row)
+   for column-size = (or (funcall column-size-f row) "")
+   for nullable    = (if (equal 0 (funcall nullable-f row)) "NOT NULL" "")
+   for remarks     = (or (funcall remarks-f row) "")
+   if (and column-name (member table-name tables))
+   collect
+   (list table-name column-name type-name column-size nullable remarks)))
+
+(defun edbi:dbd-default-type-info-filter (type-info)
+  "[internal] Default type info filter."
+  (let (ret)
+    (when type-info
+      (let ((name-col
+             (loop for (n . i) in (car type-info)
+                   if (equal n "TYPE_NAME") return i)))
+        (when name-col
+          (setq ret
+                (loop for type-row in (cdr type-info)
+                      for name = (nth name-col type-row)
+                      collect 
+                      (cons (propertize name 'summary "TYPE") name))))))
+    (unless ret
+      ;; fallback : enumerate well known types
+      (setq ret (list "INT" "INTEGER" "TINYINT" "SMALLINT" "MEDIUMINT" 
+                      "BIGINT" "UNSIGNED" "BIG" "INTEGER" "CHARACTER"
+                      "VARCHAR" "NCHAR" "NVARCHAR" "CLOB" "TEXT" "BLOB"
+                      "REAL" "DOUBLE" "FLOAT" "NUMERIC" "DECIMAL" "BOOLEAN"
+                      "DATE" "DATETIME")))
+    ret))
+
+(defun edbi:dbd-limit-format-fill (dbd table-name limit-num)
+  "[internal] Fill the format and return a SQL string."
+  (replace-regexp-in-string 
+   "%limit%" (format "%s" limit-num)
+   (replace-regexp-in-string
+    "%table%" table-name (edbi:dbd-limit-format dbd))))
+
+(defun edbi:dbd-init ()
+  "[internal] Initialize `edbi:dbd' objects."
+  (setq edbi:dbd-default
+        (make-edbi:dbd :name "dbi:SQLite"
+                       :table-info-args 
+                       (lambda (conn) (list nil nil nil nil))
+                       :table-info-filter
+                       'edbi:dbd-default-table-info-filter
+                       :column-info-args
+                       (lambda (conn) (list nil nil nil nil))
+                       :column-info-filter
+                       'edbi:dbd-default-column-info-filter
+                       :type-info-filter
+                       'edbi:dbd-default-type-info-filter
+                       :limit-format
+                       "SELECT * FROM %table% LIMIT %limit%"))
+  (loop for i in (list edbi:dbd-default)
+        do
+        (edbi:dbd-register i)))
+
+(edbi:dbd-init) ; init
+
+(defun edbi:dbd-init-postgresql ()
+  "[internal] Initialize `edbi:dbd' object for Postgresql."
+  ;; not so different from the SQLite driver...
+  )
+
+(defun edbi:dbd-init-mysql ()
+  "[internal] Initialize `edbi:dbd' object for MySQL."
+  ;; TODO
+  ;; define edbi:dbd and register 
+  )
+
+(defun edbi:dbd-init-mssql ()
+  "[internal] Initialize `edbi:dbd' object for MS SQLServer (Sybase DBD)."
+  ;; TODO
+  ;; define edbi:dbd and register 
+  ;; also define?  ADO.NET, ODBC
+  )
+
+(defun edbi:dbd-init-oracle ()
+  "[internal] Initialize `edbi:dbd' object for Oracle."
+  ;; TODO
+  ;; define edbi:dbd and register 
+  )
+
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;; User Interface
@@ -649,12 +812,13 @@ This function kills the old buffer if it exists."
                 "\n[connecting...]")))
     (unless (eq (current-buffer) db-buf)
       (pop-to-buffer db-buf))
-    (lexical-let ((conn conn) results)
+    (lexical-let ((conn conn) (dbd (edbi:dbd-get conn)) table-info)
       (deferred:error
         (edbi:seq
-         (results <- (edbi:table-info-d conn nil nil nil nil))
+         (table-info <- (apply 'edbi:table-info-d conn
+                               (funcall (edbi:dbd-table-info-args dbd) conn)))
          (lambda (x) 
-           (edbi:dbview-create-buffer conn results))
+           (edbi:dbview-create-buffer conn dbd table-info))
          (lambda (x) 
            (run-hook-with-args 'edbi:dbview-update-hook conn)))
         (lambda (err)
@@ -663,24 +827,11 @@ This function kills the old buffer if it exists."
               (insert "\n" "Connection Error : " 
                       (format "%S" err) "\n" "Check your setting..."))))))))
 
-(defun edbi:dbview-create-buffer (conn results)
-  "[internal] Render the DB Viewer buffer with the result data."
+(defun edbi:dbview-create-buffer (conn dbd table-info)
+  "[internal] Render the DB Viewer buffer with the table-info."
   (let* ((buf (get-buffer-create edbi:dbview-buffer-name))
-         (hrow (and results (car results)))
-         (rows (and results (cadr results)))
-         (data (loop with catalog-f = (edbi:column-selector hrow "TABLE_CAT")
-                     with schema-f  = (edbi:column-selector hrow "TABLE_SCHEM")
-                     with table-f   = (edbi:column-selector hrow "TABLE_NAME")
-                     with type-f    = (edbi:column-selector hrow "TABLE_TYPE")
-                     with remarks-f = (edbi:column-selector hrow "REMARKS")
-                     for row in rows
-                     for catalog = (or (funcall catalog-f row) "")
-                     for schema  = (or (funcall schema-f row) "")
-                     for type    = (funcall type-f row)
-                     for table   = (funcall table-f row)
-                     for remarks = (funcall remarks-f row)
-                     unless (or (string-match "\\(INDEX\\|SYSTEM\\)" type)
-                                (string-match "\\(information_schema\\|SYSTEM\\)" schema))
+         (data (loop for (catalog schema table type remarks) in 
+                     (funcall (edbi:dbd-table-info-filter dbd) table-info)
                      collect
                      (list (concat catalog schema) table type (or remarks "")
                            (list catalog schema table)))) table-cp)
@@ -1196,8 +1347,9 @@ that the current buffer is the query editor buffer."
          conn 
          :init-sql
          (if edbi:dbview-show-table-data-default-limit
-             (format "SELECT * FROM %s LIMIT %s" 
-                     table-name edbi:dbview-show-table-data-default-limit)
+             (edbi:dbd-limit-format-fill
+              (edbi:dbd-get conn) table-name
+              edbi:dbview-show-table-data-default-limit)
            (format "SELECT * FROM %s" table-name)) :executep t)))))
 
 (defun edbi:dbview-tabledef-query-editor-command ()
@@ -1277,79 +1429,49 @@ that the current buffer is the query editor buffer."
 
 (defun edbi:ac-editor-word-candidate-update (conn)
   "[internal] "
-  (lexical-let ((conn conn) table-info column-info type-info)
+  (lexical-let ((conn conn) (dbd (edbi:dbd-get conn))
+                table-info column-info type-info)
     (deferred:$
       (cc:semaphore-with edbi:dbview-query-execute-semaphore
         (lambda (x) 
           (edbi:seq
-           (table-info <- (edbi:table-info-d conn nil nil nil nil))
-           (column-info <- (edbi:column-info-d conn nil nil nil nil))
+           (table-info <- (apply 'edbi:table-info-d conn
+                                 (funcall (edbi:dbd-table-info-args dbd) conn)))
+           (column-info <- (apply 'edbi:column-info-d conn 
+                                  (funcall (edbi:dbd-column-info-args dbd) conn)))
            (type-info <- (edbi:type-info-all-d conn))
            (lambda (x) 
              (edbi:ac-editor-word-candidate-update1 
-              conn table-info column-info type-info))))))))
+              conn dbd table-info column-info type-info))))))))
 
-(defun edbi:ac-editor-word-candidate-update1 (conn table-info column-info type-info)
+(defun edbi:ac-editor-word-candidate-update1 (conn dbd table-info column-info type-info)
   "[internal] "
   (let (tables table-candidates column-candidates type-candidates)
     (setq table-candidates
-          (loop 
-           with hrow = (and table-info (car table-info))
-           with rows = (and table-info (cadr table-info))
-           with catalog-f = (edbi:column-selector hrow "TABLE_CAT")
-           with schema-f  = (edbi:column-selector hrow "TABLE_SCHEM")
-           with table-f   = (edbi:column-selector hrow "TABLE_NAME")
-           with type-f    = (edbi:column-selector hrow "TABLE_TYPE")
-           with remarks-f = (edbi:column-selector hrow "REMARKS")
-           for row in rows
-           for catalog = (funcall catalog-f row)
-           for schema  = (funcall schema-f row)
-           for type    = (or (funcall type-f row) "")
-           for table   = (funcall table-f row)
-           for remarks = (or (funcall remarks-f row) "")
-           if (and table (not (string-match "\\(INDEX\\|SYSTEM\\)" type)))
-           collect
-           (progn
-             (push table tables)
-             (cons (propertize table 'summary type 'document (format "%s\n%s" type remarks))
-                   table))))
+          (loop for (catalog schema table type remarks) in 
+                (funcall (edbi:dbd-table-info-filter dbd) table-info)
+                collect
+                (progn
+                  (push table tables)
+                  (cons (propertize table 'summary type
+                                    'document (format "%s\n%s" type remarks))
+                        table))))
     (setq column-candidates
-          (loop
-           with hrow = (and column-info (car column-info))
-           with rows = (and column-info (cadr column-info))
-           with table-name-f  = (edbi:column-selector hrow "TABLE_NAME")
-           with column-name-f = (edbi:column-selector hrow "COLUMN_NAME")
-           with type-name-f   = (edbi:column-selector hrow "TYPE_NAME")
-           with column-size-f = (edbi:column-selector hrow "COLUMN_SIZE")
-           with nullable-f    = (edbi:column-selector hrow "NULLABLE")
-           with remarks-f     = (edbi:column-selector hrow "REMARKS")
-           for row in rows
-           for table-name  = (funcall table-name-f row)
-           for column-name = (funcall column-name-f row)
-           for type-name   = (funcall type-name-f row)
-           for column-size = (or (funcall column-size-f row) "")
-           for nullable    = (if (equal 0 (funcall nullable-f row)) "NOT NULL" "")
-           for remarks     = (or (funcall remarks-f row) "")
-           if (and column-name (member table-name tables))
-           collect
-           (cons (propertize column-name 'summary table-name
-                             'document (format "%s %s %s\n%s" type-name
-                                               column-size nullable remarks))
-                 column-name)))
-    (when type-info
-      (let ((name-col (loop for (sym . i) in (car type-info)
-                            if (equal sym "TYPE_NAME") return i)))
-        (when name-col
-          (setq type-candidates
-                (loop for type-row in (cdr type-info)
-                      for name = (nth name-col type-row)
-                      collect 
-                      (cons (propertize name 'summary "TYPE") name))))))
+          (loop for (table-name column-name type-name column-size nullable remarks) in
+                (funcall (edbi:dbd-column-info-filter dbd) column-info tables)
+                collect
+                (cons (propertize column-name 'summary table-name
+                                  'document (format "%s %s %s\n%s" type-name
+                                                    column-size nullable remarks))
+                      column-name)))
+    (setq type-candidates
+          (funcall (edbi:dbd-type-info-filter dbd) type-info))
+
     (loop for buf in (edbi:connection-buffers conn)
           do (with-current-buffer buf
                (setq edbi:ac-editor-table-candidate-cache table-candidates
                      edbi:ac-editor-column-candidate-cache column-candidates
-         p            edbi:ac-editor-type-candidate-cache type-candidates)))
+                     edbi:ac-editor-type-candidate-cache type-candidates)))
     nil))
 
 (eval-after-load 'auto-complete
