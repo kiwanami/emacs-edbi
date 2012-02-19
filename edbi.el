@@ -132,6 +132,7 @@
        (lambda (,vsym) (,f ,vsym)))))
 
 (defmacro edbi:sync (fsym conn &rest args)
+  "Synchronous calling wrapper macro. FSYM is deferred function in the edbi."
   `(epc:sync (edbi:connection-mngr ,conn) (,fsym ,conn ,@args)))
 
 (defun edbi:column-selector (columns name)
@@ -183,7 +184,8 @@
 
 (defun edbi:connection-ds-set (conn ds)
   "[internal] Store data-source object at CONN object."
-  (setf (nth 1 conn) ds))
+  (if (nth 1 conn) (error "BUG: Data Source object is set unexpectedly.")
+    (setf (nth 1 conn) ds)))
 
 (defun edbi:connection-buffers (conn)
   "Return the buffer list of query editors."
@@ -204,7 +206,12 @@
 ;; API
 
 (defun edbi:start ()
-  "Start the EPC process. This function returns an `edbi:connection' object."
+  "Start the EPC process. This function returns an `edbi:connection' object.
+The functions `edbi:start' and `edbi:connect' are separated so as
+for library users to inspect where the problem is occurred. If
+`edbi:start' is failed, the EPC peer process may be wrong. If
+`edbi:connect' is failed, the DB setting or environment is
+wrong."
   (edbi:connection
    (epc:start-epc (car edbi:driver-info) (cdr edbi:driver-info))))
 
@@ -213,13 +220,19 @@
   (epc:stop-epc (edbi:connection-mngr conn)))
 
 
-(defun edbi:connect (conn connection-info)
-  "Connect to the DB. This function executes peer's API synchronously.
-CONNECTION-INFO is a list of strings: (data_source username auth)."
+(defun edbi:connect (conn data-source)
+  "Connect to the DB. DATA-SOURCE is a `edbi:data-source' object.
+This function executes peer's API synchronously.
+This function returns the value of '$dbh->get_info(18)' which
+shows the DB version string. (Some DB may return nil.)"
   (let ((mngr (edbi:connection-mngr conn)))
     (prog1
-        (epc:call-sync mngr 'connect connection-info)
-    (setf (epc:manager-title mngr) (car connection-info)))))
+        (epc:call-sync mngr 'connect 
+                       (list (edbi:data-source-uri data-source)
+                             (edbi:data-source-username data-source)
+                             (edbi:data-source-auth data-source)))
+      (edbi:connection-ds-set conn data-source)
+      (setf (epc:manager-title mngr) (edbi:data-source-uri data-source)))))
 
 (defun edbi:do-d (conn sql &optional params)
   "Execute SQL and return a number of affected rows."
@@ -232,7 +245,9 @@ CONNECTION-INFO is a list of strings: (data_source username auth)."
    (edbi:connection-mngr conn) 'select-all (cons sql params)))
 
 (defun edbi:prepare-d (conn sql)
-  "[STH] Prepare the statement for SQL."
+  "[STH] Prepare the statement for SQL. 
+This function holds the statement as a state in the edbi-bridge. 
+The programmer should be aware of the internal state so as not to break the state."
   (epc:call-deferred
    (edbi:connection-mngr conn) 'prepare sql))
 
@@ -304,6 +319,31 @@ CONNECTION-INFO is a list of strings: (data_source username auth)."
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;; User Interface
 
+(defface edbi:face-title
+  '((((class color) (background light))
+     :foreground "DarkGrey" :weight bold :height 1.2 :inherit variable-pitch)
+    (((class color) (background dark))
+     :foreground "darkgoldenrod3" :weight bold :height 1.2 :inherit variable-pitch)
+    (t :height 1.2 :weight bold :inherit variable-pitch))
+  "Face for title" :group 'edbi)
+
+(defface edbi:face-header
+  '((((class color) (background light))
+     :foreground "Slategray4" :background "Gray90" :weight bold)
+    (((class color) (background dark))
+     :foreground "maroon2" :weight bold))
+  "Face for headers" :group 'edbi)
+
+(defface edbi:face-error
+  '((((class color) (background light))
+     :foreground "red" :weight bold)
+    (((class color) (background dark))
+     :foreground "red" :weight bold))
+  "Face for error" :group 'edbi)
+
+
+;; Data Source history
+
 (defvar edbi:ds-history-file (expand-file-name ".edbi-ds-history" user-emacs-directory) "Data source history file.")
 (defvar edbi:ds-history-list-num 10 "Maximum history number.")
 
@@ -357,12 +397,23 @@ CONNECTION-INFO is a list of strings: (data_source username auth)."
           (kill-buffer buf))
         (setq edbi:ds-history-list ret)))))
 
+
+;; Data Source dialog
+
+(defun edbi:get-new-buffer (buffer-name)
+  "[internal] Create and return a buffer object.
+This function kills the old buffer if it exists."
+  (let ((buf (get-buffer buffer-name)))
+    (when (and buf (buffer-live-p buf))
+      (kill-buffer buf)))
+  (get-buffer-create buffer-name))
+
 (defvar edbi:dialog-buffer-name "*edbi-dialog-ds*" "[internal] edbi:dialog-buffer-name.")
 
 (defun edbi:dialog-ds-buffer (data-source on-ok-func 
                                           &optional password-show error-msg)
   "[internal] Create and return the editing buffer for the given DATA-SOURCE."
-  (let ((buf (get-buffer-create edbi:dialog-buffer-name)))
+  (let ((buf (edbi:get-new-buffer edbi:dialog-buffer-name)))
     (with-current-buffer buf
       (let ((inhibit-read-only t)) (erase-buffer))
       (kill-all-local-variables)
@@ -521,7 +572,6 @@ CONNECTION-INFO is a list of strings: (data_source username auth)."
                                                    &optional password-show error-msg)
   "[internal] Kill the previous dialog buffer and create new dialog buffer."
   (let ((win (get-buffer-window prev-buf)) new-buf)
-    (edbi:dialog-ds-kill-buffer)
     (setq new-buf
           (edbi:dialog-ds-buffer
            data-source on-ok-func password-show error-msg))
@@ -541,28 +591,6 @@ CONNECTION-INFO is a list of strings: (data_source username auth)."
    (edbi:dialog-ds-buffer
     (edbi:data-source nil) on-ok-func)))
 
-(defface edbi:face-title
-  '((((class color) (background light))
-     :foreground "DarkGrey" :weight bold :height 1.2 :inherit variable-pitch)
-    (((class color) (background dark))
-     :foreground "darkgoldenrod3" :weight bold :height 1.2 :inherit variable-pitch)
-    (t :height 1.2 :weight bold :inherit variable-pitch))
-  "Face for title" :group 'edbi)
-
-(defface edbi:face-header
-  '((((class color) (background light))
-     :foreground "Slategray4" :background "Gray90" :weight bold)
-    (((class color) (background dark))
-     :foreground "maroon2" :weight bold))
-  "Face for headers" :group 'edbi)
-
-(defface edbi:face-error
-  '((((class color) (background light))
-     :foreground "red" :weight bold)
-    (((class color) (background dark))
-     :foreground "red" :weight bold))
-  "Face for error" :group 'edbi)
-
 
 ;; database viewer
 
@@ -581,7 +609,7 @@ CONNECTION-INFO is a list of strings: (data_source username auth)."
                      (error (format "%s" err))))
              (cond
               ((null msg)
-               (deferred:call 'edbi:dbview-open data-source conn) nil)
+               (deferred:call 'edbi:dbview-open conn) nil)
               (t msg))))))
     (edbi:dialog-ds-open connection-func)))
 
@@ -608,31 +636,34 @@ CONNECTION-INFO is a list of strings: (data_source username auth)."
        (propertize (format "[%s items]\n" (length items))
                    'face 'edbi:face-header))))
 
-(defvar edbi:dbview-update-hook nil "This hook is called after rendering the dbview buffer. The hook function should have two arguments: `edbi:data-source' and `edbi:connection'")
+(defvar edbi:dbview-update-hook nil "This hook is called after rendering the dbview buffer. The hook function should have one argument: `edbi:connection'.")
 
-(defun edbi:dbview-open (data-source conn)
+(defun edbi:dbview-open (conn)
   "[internal] Start EPC conversation with the DB to open the DB Viewer buffer."
-  (let ((buf (get-buffer edbi:dbview-buffer-name)))
-    (when (and buf (buffer-live-p buf))
-      (kill-buffer buf)))
-  (with-current-buffer (get-buffer-create edbi:dbview-buffer-name)
-    (let (buffer-read-only)
-      (erase-buffer)
-      (set (make-local-variable 'edbi:data-source) data-source)
-      (set (make-local-variable 'edbi:connection) conn)
-      (insert (edbi:dbview-header data-source)
-              "\n[connecting...]")))
-  (unless (equal edbi:dbview-buffer-name (buffer-name))
-    (pop-to-buffer edbi:dbview-buffer-name))
-  (lexical-let ((data-source data-source) (conn conn) results)
-    (edbi:seq
-     (results <- (edbi:table-info-d conn nil nil nil nil))
-     (lambda (x) 
-       (edbi:dbview-create-buffer data-source conn results))
-     (lambda (x) 
-       (run-hook-with-args 'edbi:dbview-update-hook data-source conn)))))
+  (lexical-let ((db-buf (edbi:get-new-buffer edbi:dbview-buffer-name)))
+    (with-current-buffer db-buf
+      (let (buffer-read-only)
+        (erase-buffer)
+        (set (make-local-variable 'edbi:connection) conn)
+        (insert (edbi:dbview-header (edbi:connection-ds conn))
+                "\n[connecting...]")))
+    (unless (eq (current-buffer) db-buf)
+      (pop-to-buffer db-buf))
+    (lexical-let ((conn conn) results)
+      (deferred:error
+        (edbi:seq
+         (results <- (edbi:table-info-d conn nil nil nil nil))
+         (lambda (x) 
+           (edbi:dbview-create-buffer conn results))
+         (lambda (x) 
+           (run-hook-with-args 'edbi:dbview-update-hook conn)))
+        (lambda (err)
+          (with-current-buffer db-buf
+            (let (buffer-read-only)
+              (insert "\n" "Connection Error : " 
+                      (format "%S" err) "\n" "Check your setting..."))))))))
 
-(defun edbi:dbview-create-buffer (data-source conn results)
+(defun edbi:dbview-create-buffer (conn results)
   "[internal] Render the DB Viewer buffer with the result data."
   (let* ((buf (get-buffer-create edbi:dbview-buffer-name))
          (hrow (and results (car results)))
@@ -656,7 +687,7 @@ CONNECTION-INFO is a list of strings: (data_source username auth)."
     (with-current-buffer buf
       (let (buffer-read-only)
         (erase-buffer)
-        (insert (edbi:dbview-header data-source data))
+        (insert (edbi:dbview-header (edbi:connection-ds conn) data))
         (setq table-cp 
               (ctbl:create-table-component-region
                :model
@@ -707,44 +738,43 @@ CONNECTION-INFO is a list of strings: (data_source username auth)."
 
 (defun edbi:dbview-update-command ()
   (interactive)
-  (let ((conn edbi:connection) (ds edbi:data-source))
+  (let ((conn edbi:connection))
     (when conn
-      (edbi:dbview-open ds conn))))
+      (edbi:dbview-open conn))))
 
 (defun edbi:dbview-show-tabledef-command ()
   (interactive)
-  (let ((conn edbi:connection) (ds edbi:data-source))
+  (let ((conn edbi:connection))
     (when conn
       (edbi:dbview-with-cp
        (destructuring-bind (catalog schema table) table
-         (edbi:dbview-tabledef-open
-          ds conn catalog schema table))))))
+         (edbi:dbview-tabledef-open conn catalog schema table))))))
 
 (defun edbi:dbview-query-editor-command ()
   (interactive)
-  (let ((conn edbi:connection) (ds edbi:data-source))
+  (let ((conn edbi:connection))
     (when conn
       (edbi:dbview-with-cp
-       (edbi:dbview-query-editor-open ds conn)))))
+       (edbi:dbview-query-editor-open conn)))))
 
 (defun edbi:dbview-query-editor-new-command ()
   (interactive)
-  (let ((conn edbi:connection) (ds edbi:data-source))
+  (let ((conn edbi:connection))
     (when conn
       (edbi:dbview-with-cp
-       (edbi:dbview-query-editor-open ds conn :force-create-p t)))))
+       (edbi:dbview-query-editor-open conn :force-create-p t)))))
 
 (defvar edbi:dbview-show-table-data-default-limit 50
   "Maximum row numbers for default table viewer SQL.")
 
 (defun edbi:dbview-show-table-data-command ()
   (interactive)
-  (let ((conn edbi:connection) (ds edbi:data-source))
+  (let ((conn edbi:connection))
     (when conn
       (edbi:dbview-with-cp
        (destructuring-bind (catalog schema table-name) table
          (edbi:dbview-query-editor-open 
-          ds conn 
+          conn 
           :init-sql
           (if edbi:dbview-show-table-data-default-limit
               (format "SELECT * FROM %s LIMIT %s" 
@@ -864,17 +894,16 @@ that the current buffer is the query editor buffer."
         (edbi:connection-buffers-set conn (cons buf buf-list))
         buf)))))
 
-(defun* edbi:dbview-query-editor-open (data-source conn &key init-sql executep force-create-p)
+(defun* edbi:dbview-query-editor-open (conn &key init-sql executep force-create-p)
   "[internal] "
   (let ((buf (edbi:dbview-query-editor-create-buffer conn force-create-p)))
     (with-current-buffer buf
-      (set (make-local-variable 'edbi:data-source) data-source)
       (set (make-local-variable 'edbi:connection) conn)
       (set (make-local-variable 'edbi:result-buffer) nil)
       (setq mode-line-format
             `("-" mode-line-mule-info
               " Query Editor:"
-              " " ,(edbi:data-source-uri data-source)
+              " " ,(edbi:data-source-uri (edbi:connection-ds conn))
               " " mode-line-position
               " " global-mode-string
               " " "-%-"))
@@ -919,7 +948,7 @@ that the current buffer is the query editor buffer."
       (unless (and result-buf (buffer-live-p result-buf))
         (setq result-buf (edbi:dbview-query-result-get-buffer (current-buffer)))
         (setq edbi:result-buffer result-buf))
-      (edbi:dbview-query-execute edbi:data-source edbi:connection sql result-buf))))
+      (edbi:dbview-query-execute edbi:connection sql result-buf))))
 
 (defvar edbi:dbview-query-execute-semaphore (cc:semaphore-create 1)
   "[internal] edbi:dbview-query-execute-semaphore.")
@@ -928,9 +957,9 @@ that the current buffer is the query editor buffer."
   (interactive)
   (cc:semaphore-release-all edbi:dbview-query-execute-semaphore))
 
-(defun edbi:dbview-query-execute (data-source conn sql result-buf)
+(defun edbi:dbview-query-execute (conn sql result-buf)
   "[internal] "
-  (lexical-let ((ds data-source) (conn conn)
+  (lexical-let ((conn conn)
                 (sql sql) (result-buf result-buf))
     (cc:semaphore-with edbi:dbview-query-execute-semaphore
       (lambda (x) 
@@ -952,31 +981,31 @@ that the current buffer is the query editor buffer."
                   (lambda (x)
                     (cond
                      ((or rows (equal "0E0" exec-result)) ; select results
-                      (edbi:dbview-query-result-open ds result-buf header rows))
+                      (edbi:dbview-query-result-open conn result-buf header rows))
                      (t    ; update results?
-                      (edbi:dbview-query-result-text ds result-buf exec-result)))))))
+                      (edbi:dbview-query-result-text conn result-buf exec-result)))))))
               ;; ERROR
               ((null exec-result)
-               (edbi:dbview-query-result-error ds conn result-buf))
+               (edbi:dbview-query-result-error conn result-buf))
               ;; UPDATE etc
               (t 
                (edbi:dbview-query-editor-history-add sql)
-               (edbi:dbview-query-result-text ds result-buf exec-result)))))
+               (edbi:dbview-query-result-text conn result-buf exec-result)))))
           (deferred:error it
             (lambda (err) (message "ERROR : %S" err))))))))
 
-(defun edbi:dbview-query-result-text (data-source buf execute-result)
+(defun edbi:dbview-query-result-text (conn buf execute-result)
   "[internal] Display update results."
   (with-current-buffer buf
     (let (buffer-read-only)
       (fundamental-mode)
-      (edbi:dbview-query-result-modeline data-source)
+      (edbi:dbview-query-result-modeline (edbi:connection-ds conn))
       (erase-buffer)
       (insert (format "OK. %s rows are affected.\n" execute-result)))
     (setq buffer-read-only t))
   (pop-to-buffer buf))
 
-(defun edbi:dbview-query-result-error (data-source conn buf)
+(defun edbi:dbview-query-result-error (conn buf)
   "[internal] Display errors."
   (let* ((status (edbi:sync edbi:status-info-d conn))
          (err-code (car status))
@@ -985,7 +1014,7 @@ that the current buffer is the query editor buffer."
     (with-current-buffer buf
       (let (buffer-read-only)
         (fundamental-mode)
-        (edbi:dbview-query-result-modeline data-source)
+        (edbi:dbview-query-result-modeline (edbi:connection-ds conn))
         (erase-buffer)
         (insert 
          (propertize
@@ -1004,7 +1033,7 @@ that the current buffer is the query editor buffer."
      ("q"   . edbi:dbview-query-result-quit-command)
      )) "Keymap for the query result viewer buffer.")
 
-(defun edbi:dbview-query-result-open (data-source buf header rows)
+(defun edbi:dbview-query-result-open (conn buf header rows)
   "[internal] Display SELECT results."
   (let (table-cp (param (copy-ctbl:param ctbl:default-rendering-param)))
     (setf (ctbl:param-fixed-header param) edbi:query-result-fix-header)
@@ -1024,7 +1053,7 @@ that the current buffer is the query editor buffer."
     (ctbl:cp-set-selected-cell table-cp '(0 . 0))
     (with-current-buffer buf
       (set (make-local-variable 'edbi:before-win-num) (length (window-list)))
-      (edbi:dbview-query-result-modeline data-source))
+      (edbi:dbview-query-result-modeline (edbi:connection-ds conn)))
     (pop-to-buffer buf)))
 
 (defun edbi:dbview-query-result-quit-command ()
@@ -1061,7 +1090,7 @@ that the current buffer is the query editor buffer."
    (if items
        (propertize (format "[%s items]\n" (length items)) 'face 'edbi:face-header))))
 
-(defun edbi:dbview-tabledef-open (data-source conn catalog schema table)
+(defun edbi:dbview-tabledef-open (conn catalog schema table)
   "[internal] "
   (with-current-buffer
       (get-buffer-create edbi:dbview-table-buffer-name)
@@ -1069,12 +1098,12 @@ that the current buffer is the query editor buffer."
       (erase-buffer)
       (set (make-local-variable 'edbi:before-win-num) (length (window-list)))
       (set (make-local-variable 'edbi:tabledef)
-           (list data-source conn catalog schema table))
-      (insert (edbi:dbview-tabledef-header data-source table)
+           (list conn catalog schema table))
+      (insert (edbi:dbview-tabledef-header (edbi:connection-ds conn) table)
               "[connecting...]\n")))
   (unless (equal (buffer-name) edbi:dbview-table-buffer-name)
     (pop-to-buffer edbi:dbview-table-buffer-name))
-  (lexical-let ((data-source data-source) (conn conn) 
+  (lexical-let ((conn conn) 
                 (catalog catalog) (schema schema) (table table)
                 column-info pkey-info index-info)
     (edbi:seq
@@ -1083,8 +1112,7 @@ that the current buffer is the query editor buffer."
      (index-info  <- (edbi:table-info-d conn catalog schema table "INDEX"))
      (lambda (x) 
        (edbi:dbview-tabledef-create-buffer 
-        data-source conn table
-        column-info pkey-info index-info)))))
+        conn table column-info pkey-info index-info)))))
 
 (defun edbi:dbview-tabledef-get-pkey-info (pkey-info column-name)
   "[internal] "
@@ -1101,7 +1129,7 @@ that the current buffer is the query editor buffer."
                        (funcall keyseq-f row))
         finally return ""))
 
-(defun edbi:dbview-tabledef-create-buffer (data-source conn table-name column-info pkey-info index-info)
+(defun edbi:dbview-tabledef-create-buffer (conn table-name column-info pkey-info index-info)
   "[internal] "
   (let* ((buf (get-buffer-create edbi:dbview-table-buffer-name))
          (hrow (and column-info (car column-info)))
@@ -1128,7 +1156,8 @@ that the current buffer is the query editor buffer."
       (let (buffer-read-only)
         (erase-buffer)
         ;; header
-        (insert (edbi:dbview-tabledef-header data-source table-name data))
+        (insert (edbi:dbview-tabledef-header
+                 (edbi:connection-ds conn) table-name data))
         ;; table
         (setq table-cp
               (ctbl:create-table-component-region
@@ -1162,9 +1191,9 @@ that the current buffer is the query editor buffer."
   (interactive)
   (let ((args edbi:tabledef))
     (when args
-      (destructuring-bind (data-source conn catalog schema table-name) args
+      (destructuring-bind (conn catalog schema table-name) args
         (edbi:dbview-query-editor-open 
-         data-source conn 
+         conn 
          :init-sql
          (if edbi:dbview-show-table-data-default-limit
              (format "SELECT * FROM %s LIMIT %s" 
@@ -1175,15 +1204,15 @@ that the current buffer is the query editor buffer."
   (interactive)
   (let ((args edbi:tabledef))
     (when args
-      (destructuring-bind (data-source conn catalog schema table-name) args
-        (edbi:dbview-query-editor-open data-source conn)))))
+      (destructuring-bind (conn catalog schema table-name) args
+        (edbi:dbview-query-editor-open conn)))))
 
 (defun edbi:dbview-tabledef-query-editor-new-command ()
   (interactive)
   (let ((args edbi:tabledef))
     (when args
-      (destructuring-bind (data-source conn catalog schema table-name) args
-        (edbi:dbview-query-editor-open data-source conn :force-create-p t)))))
+      (destructuring-bind (conn catalog schema table-name) args
+        (edbi:dbview-query-editor-open conn :force-create-p t)))))
 
 (defun edbi:dbview-tabledef-quit-command ()
   (interactive)
@@ -1246,7 +1275,7 @@ that the current buffer is the query editor buffer."
   "Auto complete candidate function."
   edbi:ac-editor-type-candidate-cache)
 
-(defun edbi:ac-editor-word-candidate-update (data-source conn)
+(defun edbi:ac-editor-word-candidate-update (conn)
   "[internal] "
   (lexical-let ((conn conn) table-info column-info type-info)
     (deferred:$
