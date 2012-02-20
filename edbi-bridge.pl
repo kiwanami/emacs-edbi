@@ -132,6 +132,7 @@ sub edbi_column_info {
   my ($args) = @_;
   my ($catalog, $schema, $table, $column) = @$args;
   $sth = $dbh->column_info( $catalog, $schema, $table, $column );
+  return [[],[]] unless $sth;
   return [$sth->{NAME}, $sth->fetchall_arrayref()];
 }
 

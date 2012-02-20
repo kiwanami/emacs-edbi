@@ -1127,8 +1127,8 @@ that the current buffer is the query editor buffer."
                (edbi:dbview-query-editor-history-add sql)
                (lexical-let (rows header (exec-result exec-result))
                  (edbi:seq
-                  (rows <- (edbi:fetch-d conn))
                   (header <- (edbi:fetch-columns-d conn))
+                  (rows <- (edbi:fetch-d conn))
                   (lambda (x)
                     (cond
                      ((or rows (equal "0E0" exec-result)) ; select results
