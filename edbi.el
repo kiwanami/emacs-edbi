@@ -169,10 +169,12 @@
   "Return the auth slot of the DATA-SOURCE."
   (nth 2 data-source))
 
+(defstruct edbi:ac-candidates tables columns types keywords)
 
 (defun edbi:connection (epc-mngr)
   "Create an `edbi:connection' object."
-  (list epc-mngr nil nil))
+  ;; edbi:manager, edbi:data-source, query-buffers, ac-sources
+  (list epc-mngr nil nil nil))
 
 (defsubst edbi:connection-mngr (conn)
   "Return the `epc:manager' object."
@@ -201,6 +203,13 @@
   "[internal] Store BUFFER-LIST at CONN object."
   (setf (nth 2 conn) buffer-list))
 
+(defun edbi:connection-ac (conn)
+  "Return ac-candidate object."
+  (nth 3 conn))
+
+(defun edbi:connection-ac-set (conn ac-candidate)
+  "[internal] Store ac-candidate object at CONN object."
+  (setf (nth 3 conn) ac-candidate))
 
 
 ;; API
@@ -334,9 +343,10 @@ The programmer should be aware of the internal state so as not to break the stat
 ;;   type-info-filter   : filter function for `edbi:type-info-all-d'.
 ;;                        this function returns a list of type-name.
 ;;   limit-format       : a format string for the limited select statement.
+;;   keywords           : return a SQL keywords function
 
 (defstruct edbi:dbd name table-info-args table-info-filter
-  column-info-args column-info-filter type-info-filter limit-format)
+  column-info-args column-info-filter type-info-filter limit-format keywords)
 
 (defvar edbi:dbd-alist nil "[internal] List of the dbd name and `edbi:dbd' object.")
 (defvar edbi:dbd-default nil "[internal] Default `edbi:dbd' object.")
@@ -381,7 +391,7 @@ The programmer should be aware of the internal state so as not to break the stat
                           (string-match "\\(information_schema\\|SYSTEM\\)" schema))))
    collect (list catalog schema table type remarks)))
 
-(defun edbi:dbd-default-column-info-filter (column-info tables)
+(defun edbi:dbd-default-column-info-filter (column-info)
   "[internal] Default column name filter."
   (loop
    with hrow = (and column-info (car column-info))
@@ -399,7 +409,7 @@ The programmer should be aware of the internal state so as not to break the stat
    for column-size = (or (funcall column-size-f row) "")
    for nullable    = (if (equal 0 (funcall nullable-f row)) "NOT NULL" "")
    for remarks     = (or (funcall remarks-f row) "")
-   if (and column-name (member table-name tables))
+   if (and column-name)
    collect
    (list table-name column-name type-name column-size nullable remarks)))
 
@@ -425,6 +435,57 @@ The programmer should be aware of the internal state so as not to break the stat
                       "DATE" "DATETIME")))
     ret))
 
+(defun edbi:dbd-default-keywords ()
+  "[internal] Default SQL keywords, following format:
+ (list (\"keyword type\" . (keyword list)) ... )"
+  (list
+   (cons "Keyword"
+         (list
+          "ABSOLUTE" "ACTION" "ADD" "ADMIN" "AFTER" "AGGREGATE" "ALIAS" "ALL"
+          "ALLOCATE" "ALTER" "AND" "ANY" "ARE" "AS" "ASC" "ASSERTION" "AT"
+          "AUTHORIZATION" "BEFORE" "BEGIN" "BOTH" "BREADTH" "BY" "CALL"
+          "CASCADE" "CASCADED" "CASE" "CATALOG" "CHECK" "CLASS" "CLOSE"
+          "COLLATE" "COLLATION" "COLUMN" "COMMIT" "COMPLETION" "CONNECT"
+          "CONNECTION" "CONSTRAINT" "CONSTRAINTS" "CONSTRUCTOR" "CONTINUE"
+          "CORRESPONDING" "CREATE" "CROSS" "CUBE" "CURRENT" "CURSOR" "CYCLE"
+          "DATA" "DAY" "DEALLOCATE" "DECLARE" "DEFAULT" "DEFERRABLE" "DEFERRED"
+          "DELETE" "DEPTH" "DEREF" "DESC" "DESCRIBE" "DESCRIPTOR" "DESTROY"
+          "DESTRUCTOR" "DETERMINISTIC" "DIAGNOSTICS" "DICTIONARY" "DISCONNECT"
+          "DISTINCT" "DOMAIN" "DROP" "DYNAMIC" "EACH" "ELSE" "END" "EQUALS"
+          "ESCAPE" "EVERY" "EXCEPT" "EXCEPTION" "EXEC" "EXECUTE" "EXTERNAL"
+          "FALSE" "FETCH" "FIRST" "FOR" "FOREIGN" "FOUND" "FREE" "FROM" "FULL"
+          "FUNCTION" "GENERAL" "GET" "GLOBAL" "GO" "GOTO" "GRANT" "GROUP"
+          "GROUPING" "HAVING" "HOST" "HOUR" "IDENTITY" "IGNORE" "IMMEDIATE" "IN"
+          "INDICATOR" "INITIALIZE" "INITIALLY" "INNER" "INOUT" "INPUT" "INSERT"
+          "INTERSECT" "INTO" "IS" "ISOLATION" "ITERATE" "JOIN" "KEY" "LANGUAGE"
+          "LAST" "LATERAL" "LEADING" "LEFT" "LESS" "LEVEL" "LIKE" "LIMIT"
+          "LOCAL" "LOCATOR" "MAP" "MATCH" "MINUTE" "MODIFIES" "MODIFY" "MODULE"
+          "MONTH" "NAMES" "NATURAL" "NEW" "NEXT" "NO" "NONE" "NOT" "NULL" "OF"
+          "OFF" "OLD" "ON" "ONLY" "OPEN" "OPERATION" "OPTION" "OR" "ORDER"
+          "ORDINALITY" "OUT" "OUTER" "OUTPUT" "PAD" "PARAMETER" "PARAMETERS"
+          "PARTIAL" "PATH" "POSTFIX" "PREFIX" "PREORDER" "PREPARE" "PRESERVE"
+          "PRIMARY" "PRIOR" "PRIVILEGES" "PROCEDURE" "PUBLIC" "READ" "READS"
+          "RECURSIVE" "REFERENCES" "REFERENCING" "RELATIVE" "RESTRICT" "RESULT"
+          "RETURN" "RETURNS" "REVOKE" "RIGHT" "ROLE" "ROLLBACK" "ROLLUP"
+          "ROUTINE" "ROWS" "SAVEPOINT" "SCHEMA" "SCROLL" "SEARCH" "SECOND"
+          "SECTION" "SELECT" "SEQUENCE" "SESSION" "SET" "SETS" "SIZE" "SOME"
+          "SPACE" "SPECIFIC" "SPECIFICTYPE" "SQL" "SQLEXCEPTION" "SQLSTATE"
+          "SQLWARNING" "START" "STATE" "STATEMENT" "STATIC" "STRUCTURE" "TABLE"
+          "TEMPORARY" "TERMINATE" "THAN" "THEN" "TIMEZONE_HOUR"
+          "TIMEZONE_MINUTE" "TO" "TRAILING" "TRANSACTION" "TRANSLATION"
+          "TRIGGER" "TRUE" "UNDER" "UNION" "UNIQUE" "UNKNOWN" "UNNEST" "UPDATE"
+          "USAGE" "USING" "VALUE" "VALUES" "VARIABLE" "VIEW" "WHEN" "WHENEVER"
+          "WHERE" "WITH" "WITHOUT" "WORK" "WRITE" "YEAR"))
+   (cons "Functions"
+         (list
+          "abs" "avg" "bit_length" "cardinality" "cast" "char_length"
+          "character_length" "coalesce" "convert" "count" "current_date"
+          "current_path" "current_role" "current_time" "current_timestamp"
+          "current_user" "extract" "localtime" "localtimestamp" "lower" "max"
+          "min" "mod" "nullif" "octet_length" "overlay" "placing" "session_user"
+          "substring" "sum" "system_user" "translate" "treat" "trim" "upper"
+          "user"))))
+
 (defun edbi:dbd-limit-format-fill (dbd table-name limit-num)
   "[internal] Fill the format and return a SQL string."
   (replace-regexp-in-string 
@@ -441,29 +502,177 @@ The programmer should be aware of the internal state so as not to break the stat
                        :table-info-filter
                        'edbi:dbd-default-table-info-filter
                        :column-info-args
-                       (lambda (conn) (list nil nil nil nil))
+                       (lambda (conn table) (list nil nil table nil))
                        :column-info-filter
                        'edbi:dbd-default-column-info-filter
                        :type-info-filter
                        'edbi:dbd-default-type-info-filter
                        :limit-format
-                       "SELECT * FROM %table% LIMIT %limit%"))
-  (loop for i in (list edbi:dbd-default)
+                       "SELECT * FROM %table% LIMIT %limit%"
+                       :keywords
+                       'edbi:dbd-default-keywords))
+  (loop for i in (list edbi:dbd-default
+                       (edbi:dbd-init-postgresql)
+                       (edbi:dbd-init-mysql))
         do
         (edbi:dbd-register i)))
 
-(edbi:dbd-init) ; init
-
 (defun edbi:dbd-init-postgresql ()
   "[internal] Initialize `edbi:dbd' object for Postgresql."
-  ;; not so different from the SQLite driver...
-  )
+        (make-edbi:dbd :name "dbi:SQLite"
+                       :table-info-args 
+                       (lambda (conn) (list nil nil nil nil))
+                       :table-info-filter
+                       'edbi:dbd-default-table-info-filter
+                       :column-info-args
+                       (lambda (conn table) (list nil nil table nil))
+                       :column-info-filter
+                       'edbi:dbd-default-column-info-filter
+                       :type-info-filter
+                       'edbi:dbd-default-type-info-filter
+                       :limit-format
+                       "SELECT * FROM %table% LIMIT %limit%"
+                       :keywords
+                       'edbi:dbd-init-postgresql-keywords))
+
+(defun edbi:dbd-init-postgresql-keywords ()
+  "[internal] "
+  (list
+   (cons "Function"
+         (list
+          "abbrev" "abs" "acos" "age" "area" "ascii" "asin" "atab2" "atan"
+          "atan2" "avg" "bit_length" "both" "broadcast" "btrim" "cbrt" "ceil"
+          "center" "char_length" "chr" "coalesce" "col_description" "convert"
+          "cos" "cot" "count" "current_database" "current_date" "current_schema"
+          "current_schemas" "current_setting" "current_time" "current_timestamp"
+          "current_user" "currval" "date_part" "date_trunc" "decode" "degrees"
+          "diameter" "encode" "exp" "extract" "floor" "get_bit" "get_byte"
+          "has_database_privilege" "has_function_privilege"
+          "has_language_privilege" "has_schema_privilege" "has_table_privilege"
+          "height" "host" "initcap" "isclosed" "isfinite" "isopen" "leading"
+          "length" "ln" "localtime" "localtimestamp" "log" "lower" "lpad"
+          "ltrim" "masklen" "max" "min" "mod" "netmask" "network" "nextval"
+          "now" "npoints" "nullif" "obj_description" "octet_length" "overlay"
+          "pclose" "pg_client_encoding" "pg_function_is_visible"
+          "pg_get_constraintdef" "pg_get_indexdef" "pg_get_ruledef"
+          "pg_get_userbyid" "pg_get_viewdef" "pg_opclass_is_visible"
+          "pg_operator_is_visible" "pg_table_is_visible" "pg_type_is_visible"
+          "pi" "popen" "position" "pow" "quote_ident" "quote_literal" "radians"
+          "radius" "random" "repeat" "replace" "round" "rpad" "rtrim"
+          "session_user" "set_bit" "set_byte" "set_config" "set_masklen"
+          "setval" "sign" "sin" "split_part" "sqrt" "stddev" "strpos" "substr"
+          "substring" "sum" "tan" "timeofday" "to_ascii" "to_char" "to_date"
+          "to_hex" "to_number" "to_timestamp" "trailing" "translate" "trim"
+          "trunc" "upper" "variance" "version" "width"))
+   (cons "Keyword"
+         (list
+          "ABORT" "ACCESS" "ADD" "AFTER" "AGGREGATE" "ALIGNMENT" "ALL" "ALTER"
+          "ANALYZE" "AND" "ANY" "AS" "ASC" "ASSIGNMENT" "AUTHORIZATION"
+          "BACKWARD" "BASETYPE" "BEFORE" "BEGIN" "BETWEEN" "BINARY" "BY" "CACHE"
+          "CALLED" "CASCADE" "CASE" "CAST" "CHARACTERISTICS" "CHECK"
+          "CHECKPOINT" "CLASS" "CLOSE" "CLUSTER" "COLUMN" "COMMENT" "COMMIT"
+          "COMMITTED" "COMMUTATOR" "CONSTRAINT" "CONSTRAINTS" "CONVERSION"
+          "COPY" "CREATE" "CREATEDB" "CREATEUSER" "CURSOR" "CYCLE" "DATABASE"
+          "DEALLOCATE" "DECLARE" "DEFAULT" "DEFERRABLE" "DEFERRED" "DEFINER"
+          "DELETE" "DELIMITER" "DESC" "DISTINCT" "DO" "DOMAIN" "DROP" "EACH"
+          "ELEMENT" "ELSE" "ENCODING" "ENCRYPTED" "END" "ESCAPE" "EXCEPT"
+          "EXCLUSIVE" "EXECUTE" "EXISTS" "EXPLAIN" "EXTENDED" "EXTERNAL" "FALSE"
+          "FETCH" "FINALFUNC" "FOR" "FORCE" "FOREIGN" "FORWARD" "FREEZE" "FROM"
+          "FULL" "FUNCTION" "GRANT" "GROUP" "GTCMP" "HANDLER" "HASHES" "HAVING"
+          "IMMEDIATE" "IMMUTABLE" "IMPLICIT" "IN" "INCREMENT" "INDEX" "INHERITS"
+          "INITCOND" "INITIALLY" "INPUT" "INSENSITIVE" "INSERT" "INSTEAD"
+          "INTERNALLENGTH" "INTERSECT" "INTO" "INVOKER" "IS" "ISNULL"
+          "ISOLATION" "JOIN" "KEY" "LANGUAGE" "LEFTARG" "LEVEL" "LIKE" "LIMIT"
+          "LISTEN" "LOAD" "LOCAL" "LOCATION" "LOCK" "LTCMP" "MAIN" "MATCH"
+          "MAXVALUE" "MERGES" "MINVALUE" "MODE" "MOVE" "NATURAL" "NEGATOR"
+          "NEXT" "NOCREATEDB" "NOCREATEUSER" "NONE" "NOT" "NOTHING" "NOTIFY"
+          "NOTNULL" "NULL" "OF" "OFFSET" "OIDS" "ON" "ONLY" "OPERATOR" "OR"
+          "ORDER" "OUTPUT" "OWNER" "PARTIAL" "PASSEDBYVALUE" "PASSWORD" "PLAIN"
+          "PREPARE" "PRIMARY" "PRIOR" "PRIVILEGES" "PROCEDURAL" "PROCEDURE"
+          "PUBLIC" "READ" "RECHECK" "REFERENCES" "REINDEX" "RELATIVE" "RENAME"
+          "RESET" "RESTRICT" "RETURNS" "REVOKE" "RIGHTARG" "ROLLBACK" "ROW"
+          "RULE" "SCHEMA" "SCROLL" "SECURITY" "SELECT" "SEQUENCE" "SERIALIZABLE"
+          "SESSION" "SET" "SFUNC" "SHARE" "SHOW" "SIMILAR" "SOME" "SORT1"
+          "SORT2" "STABLE" "START" "STATEMENT" "STATISTICS" "STORAGE" "STRICT"
+          "STYPE" "SYSID" "TABLE" "TEMP" "TEMPLATE" "TEMPORARY" "THEN" "TO"
+          "TRANSACTION" "TRIGGER" "TRUE" "TRUNCATE" "TRUSTED" "TYPE"
+          "UNENCRYPTED" "UNION" "UNIQUE" "UNKNOWN" "UNLISTEN" "UNTIL" "UPDATE"
+          "USAGE" "USER" "USING" "VACUUM" "VALID" "VALIDATOR" "VALUES"
+          "VARIABLE" "VERBOSE" "VIEW" "VOLATILE" "WHEN" "WHERE" "WITH" "WITHOUT"
+          "WORK"))))
 
 (defun edbi:dbd-init-mysql ()
   "[internal] Initialize `edbi:dbd' object for MySQL."
-  ;; TODO
-  ;; define edbi:dbd and register 
-  )
+  (make-edbi:dbd :name "dbi:mysql"
+                 :table-info-args 
+                 (lambda (conn) (list nil nil nil nil))
+                 :table-info-filter
+                 'edbi:dbd-default-table-info-filter
+                 :column-info-args
+                 (lambda (conn table) (list nil nil table "%"))
+                 :column-info-filter
+                 'edbi:dbd-default-column-info-filter
+                 :type-info-filter
+                 'edbi:dbd-default-type-info-filter
+                 :limit-format
+                 "SELECT * FROM %table% LIMIT %limit%"
+                 :keywords
+                 'edbi:dbd-init-mysql-keywords))
+
+(defun edbi:dbd-init-mysql-keywords ()
+  "[internal] "
+  (list
+   (cons "Function"
+         (list
+          "ascii" "avg" "bdmpolyfromtext" "bdmpolyfromwkb" "bdpolyfromtext"
+          "bdpolyfromwkb" "benchmark" "bin" "bit_and" "bit_length" "bit_or"
+          "bit_xor" "both" "cast" "char_length" "character_length" "coalesce"
+          "concat" "concat_ws" "connection_id" "conv" "convert" "count"
+          "curdate" "current_date" "current_time" "current_timestamp" "curtime"
+          "elt" "encrypt" "export_set" "field" "find_in_set" "found_rows" "from"
+          "geomcollfromtext" "geomcollfromwkb" "geometrycollectionfromtext"
+          "geometrycollectionfromwkb" "geometryfromtext" "geometryfromwkb"
+          "geomfromtext" "geomfromwkb" "get_lock" "group_concat" "hex" "ifnull"
+          "instr" "interval" "isnull" "last_insert_id" "lcase" "leading"
+          "length" "linefromtext" "linefromwkb" "linestringfromtext"
+          "linestringfromwkb" "load_file" "locate" "lower" "lpad" "ltrim"
+          "make_set" "master_pos_wait" "max" "mid" "min" "mlinefromtext"
+          "mlinefromwkb" "mpointfromtext" "mpointfromwkb" "mpolyfromtext"
+          "mpolyfromwkb" "multilinestringfromtext" "multilinestringfromwkb"
+          "multipointfromtext" "multipointfromwkb" "multipolygonfromtext"
+          "multipolygonfromwkb" "now" "nullif" "oct" "octet_length" "ord"
+          "pointfromtext" "pointfromwkb" "polyfromtext" "polyfromwkb"
+          "polygonfromtext" "polygonfromwkb" "position" "quote" "rand"
+          "release_lock" "repeat" "replace" "reverse" "rpad" "rtrim" "soundex"
+          "space" "std" "stddev" "substring" "substring_index" "sum" "sysdate"
+          "trailing" "trim" "ucase" "unix_timestamp" "upper" "user" "variance"))
+   (cons "Keyword"
+         (list
+          "ACTION" "ADD" "AFTER" "AGAINST" "ALL" "ALTER" "AND" "AS" "ASC"
+          "AUTO_INCREMENT" "AVG_ROW_LENGTH" "BDB" "BETWEEN" "BY" "CASCADE"
+          "CASE" "CHANGE" "CHARACTER" "CHECK" "CHECKSUM" "CLOSE" "COLLATE"
+          "COLLATION" "COLUMN" "COLUMNS" "COMMENT" "COMMITTED" "CONCURRENT"
+          "CONSTRAINT" "CREATE" "CROSS" "DATA" "DATABASE" "DEFAULT"
+          "DELAY_KEY_WRITE" "DELAYED" "DELETE" "DESC" "DIRECTORY" "DISABLE"
+          "DISTINCT" "DISTINCTROW" "DO" "DROP" "DUMPFILE" "DUPLICATE" "ELSE"
+          "ENABLE" "ENCLOSED" "END" "ESCAPED" "EXISTS" "FIELDS" "FIRST" "FOR"
+          "FORCE" "FOREIGN" "FROM" "FULL" "FULLTEXT" "GLOBAL" "GROUP" "HANDLER"
+          "HAVING" "HEAP" "HIGH_PRIORITY" "IF" "IGNORE" "IN" "INDEX" "INFILE"
+          "INNER" "INSERT" "INSERT_METHOD" "INTO" "IS" "ISAM" "ISOLATION" "JOIN"
+          "KEY" "KEYS" "LAST" "LEFT" "LEVEL" "LIKE" "LIMIT" "LINES" "LOAD"
+          "LOCAL" "LOCK" "LOW_PRIORITY" "MATCH" "MAX_ROWS" "MERGE" "MIN_ROWS"
+          "MODE" "MODIFY" "MRG_MYISAM" "MYISAM" "NATURAL" "NEXT" "NO" "NOT"
+          "NULL" "OFFSET" "OJ" "ON" "OPEN" "OPTIONALLY" "OR" "ORDER" "OUTER"
+          "OUTFILE" "PACK_KEYS" "PARTIAL" "PASSWORD" "PREV" "PRIMARY"
+          "PROCEDURE" "QUICK" "RAID0" "RAID_TYPE" "READ" "REFERENCES" "RENAME"
+          "REPEATABLE" "RESTRICT" "RIGHT" "ROLLBACK" "ROLLUP" "ROW_FORMAT"
+          "SAVEPOINT" "SELECT" "SEPARATOR" "SERIALIZABLE" "SESSION" "SET"
+          "SHARE" "SHOW" "SQL_BIG_RESULT" "SQL_BUFFER_RESULT" "SQL_CACHE"
+          "SQL_CALC_FOUND_ROWS" "SQL_NO_CACHE" "SQL_SMALL_RESULT" "STARTING"
+          "STRAIGHT_JOIN" "STRIPED" "TABLE" "TABLES" "TEMPORARY" "TERMINATED"
+          "THEN" "TO" "TRANSACTION" "TRUNCATE" "TYPE" "UNCOMMITTED" "UNION"
+          "UNIQUE" "UNLOCK" "UPDATE" "USE" "USING" "VALUES" "WHEN" "WHERE"
+          "WITH" "WRITE" "XOR"))))
 
 (defun edbi:dbd-init-mssql ()
   "[internal] Initialize `edbi:dbd' object for MS SQLServer (Sybase DBD)."
@@ -686,10 +895,9 @@ This function kills the old buffer if it exists."
           (widget-value (plist-get fields 'data-source))
           (widget-value (plist-get fields 'username))
           (widget-value (plist-get fields 'auth))))
-        (password-show (widget-value cbshow)))
+        (password-show (widget-value (plist-get fields 'cbshow))))
     (edbi:dialog-replace-buffer-window
-     (current-buffer)
-     current-ds on-ok-func password-show error-msg)
+     (current-buffer) current-ds on-ok-func password-show)
     (widget-forward 3)))
 
 (defun edbi:dialog-ds-commit (data-source fields on-ok-func)
@@ -777,6 +985,7 @@ This function kills the old buffer if it exists."
     (edbi:dialog-ds-open connection-func)))
 
 (defvar edbi:dbview-buffer-name "*edbi-dbviewer*" "[internal] Database buffer name.")
+(defvar edbi:connection nil "[internal] Buffer local variable.")
 
 (defvar edbi:dbview-keymap
   (epc:add-keymap
@@ -945,6 +1154,7 @@ This function kills the old buffer if it exists."
      )) "Keymap for the `edbi:sql-mode'.")
 
 (defvar edbi:sql-mode-hook nil  "edbi:sql-mode-hook.")
+(defvar edbi:result-buffer nil  "[internal] Buffer local variable.")
 
 (defun edbi:sql-mode ()
   "Major mode for SQL. This function is copied from sql.el and modified."
@@ -985,6 +1195,8 @@ This function kills the old buffer if it exists."
 
 (defvar edbi:query-editor-history-max-num 50 "[internal] Maximum number of the query histories.")
 (defvar edbi:query-editor-history-list nil "[internal] A list of the query histories.")
+(defvar edbi:history-index   nil "[internal] A buffer local variable.")
+(defvar edbi:history-current nil "[internal] A buffer local variable.")
 
 (defun edbi:dbview-query-editor-history-back-command ()
   (interactive)
@@ -1184,6 +1396,8 @@ that the current buffer is the query editor buffer."
      ("q"   . edbi:dbview-query-result-quit-command)
      )) "Keymap for the query result viewer buffer.")
 
+(defvar edbi:before-win-num nil "[internal] A buffer local variable.")
+
 (defun edbi:dbview-query-result-open (conn buf header rows)
   "[internal] Display SELECT results."
   (let (table-cp (param (copy-ctbl:param ctbl:default-rendering-param)))
@@ -1232,6 +1446,8 @@ that the current buffer is the query editor buffer."
      ("C"   . edbi:dbview-tabledef-query-editor-new-command)
      ("V"   . edbi:dbview-tabledef-show-data-command)
      )) "Keymap for the DB Table Viewer buffer.")
+
+(defvar edbi:tabledef nil "[internal] A buffer local variable.")
 
 (defun edbi:dbview-tabledef-header (data-source table-name &optional items)
   "[internal] "
@@ -1384,24 +1600,56 @@ that the current buffer is the query editor buffer."
 
 ;;; for auto-complete
 
+(defface edbi:face-ac-table-candidate-face
+  '((t (:background "lightgray" :foreground "navy")))
+  "Face for table candidate"
+  :group 'edbi)
+
+(defface edbi:face-ac-table-selection-face
+  '((t (:background "navy" :foreground "white")))
+  "Face for the table selected candidate."
+  :group 'edbi)
+
+(defface edbi:face-ac-column-candidate-face
+  '((t (:background "LightCyan" :foreground "DarkCyan")))
+  "Face for column candidate"
+  :group 'edbi)
+
+(defface edbi:face-ac-column-selection-face
+  '((t (:background "DarkCyan" :foreground "white")))
+  "Face for the column selected candidate."
+  :group 'edbi)
+
+(defface edbi:face-ac-type-candidate-face
+  '((t (:background "PaleGoldenrod" :foreground "DarkOliveGreen")))
+  "Face for type candidate"
+  :group 'edbi)
+
+(defface edbi:face-ac-type-selection-face
+  '((t (:background "DarkOliveGreen" :foreground "white")))
+  "Face for the type selected candidate."
+  :group 'edbi)
 
 (defun edbi:setup-auto-complete ()
   "Initialization for auto-complete."
   (ac-define-source edbi:tables
     '((candidates . edbi:ac-editor-table-candidates)
+      (candidate-face . edbi:face-ac-table-candidate-face)
+      (selection-face . edbi:face-ac-table-selection-face)
       (symbol . "T")))
   (ac-define-source edbi:columns
     '((candidates . edbi:ac-editor-column-candidates)
+      (candidate-face . edbi:face-ac-column-candidate-face)
+      (selection-face . edbi:face-ac-column-selection-face)
       (symbol . "C")))
   (ac-define-source edbi:types
     '((candidates . edbi:ac-editor-type-candidates)
+      (candidate-face . edbi:face-ac-type-candidate-face)
+      (selection-face . edbi:face-ac-type-selection-face)
       (symbol . "+")))
-  (defvar edbi:ac-editor-table-candidate-cache nil  "[internal] Word cache for auto-complete.")
-  (defvar edbi:ac-editor-column-candidate-cache nil  "[internal] Word cache for auto-complete.")
-  (defvar edbi:ac-editor-type-candidate-cache nil  "[internal] Word cache for auto-complete.")
-  (make-variable-buffer-local 'edbi:ac-editor-table-candidate-cache)
-  (make-variable-buffer-local 'edbi:ac-editor-column-candidate-cache)
-  (make-variable-buffer-local 'edbi:ac-editor-type-candidate-cache)
+  (ac-define-source edbi:keywords
+    '((candidates . edbi:ac-editor-keyword-candidates)
+      (symbol . "K")))
   (add-hook 'edbi:sql-mode-hook 'edbi:ac-edbi:sql-mode-hook)
   (add-hook 'edbi:dbview-update-hook 'edbi:ac-editor-word-candidate-update)
   (unless (memq 'edbi:sql-mode ac-modes)
@@ -1413,41 +1661,68 @@ that the current buffer is the query editor buffer."
   (setq ac-sources '(ac-source-words-in-same-mode-buffers
                      ac-source-edbi:tables
                      ac-source-edbi:columns
-                     ac-source-edbi:types)))
+                     ac-source-edbi:types
+                     ac-source-edbi:keywords)))
 
 (defun edbi:ac-editor-table-candidates ()
   "Auto complete candidate function."
-  edbi:ac-editor-table-candidate-cache)
+  (edbi:ac-candidates-tables (edbi:connection-ac edbi:connection)))
 
 (defun edbi:ac-editor-column-candidates ()
   "Auto complete candidate function."
-  edbi:ac-editor-column-candidate-cache)
+  (edbi:ac-candidates-columns (edbi:connection-ac edbi:connection)))
 
 (defun edbi:ac-editor-type-candidates ()
   "Auto complete candidate function."
-  edbi:ac-editor-type-candidate-cache)
+  (edbi:ac-candidates-types (edbi:connection-ac edbi:connection)))
+
+(defun edbi:ac-editor-keyword-candidates ()
+  "Auto complete candidate function."
+  (edbi:ac-candidates-keywords (edbi:connection-ac edbi:connection)))
+
+(defvar edbi:ac-editor-word-candidate-update-state nil "[internal] If t, the thread is working.")
+
+(defun edbi:ac-editor-word-candidate-update-state-clear ()
+  "[internal] "
+  (interactive)
+  (edbi:dbview-query-execute-semaphore-clear)
+  (setq edbi:ac-editor-word-candidate-update-state nil))
 
 (defun edbi:ac-editor-word-candidate-update (conn)
-  "[internal] "
-  (lexical-let ((conn conn) (dbd (edbi:dbd-get conn))
-                table-info column-info type-info)
-    (deferred:$
-      (cc:semaphore-with edbi:dbview-query-execute-semaphore
+  "[internal] Start word collection for database information."
+  (unless edbi:ac-editor-word-candidate-update-state
+    (lexical-let ((conn conn) (dbd (edbi:dbd-get conn)) tables
+                  (acs (make-edbi:ac-candidates)))
+      (message "DB Word collection is started.")
+      (setq edbi:ac-editor-word-candidate-update-state t)
+      (deferred:try
+        (edbi:seq
+         (tables <- (edbi:ac-editor-word-candidate-update-tables conn dbd acs))
+         (edbi:ac-editor-word-candidate-update-columns conn dbd acs tables)
+         (edbi:ac-editor-word-candidate-update-types conn dbd acs)
+         (edbi:ac-editor-word-candidate-update-keywords conn dbd acs))
+        :finally
         (lambda (x) 
-          (edbi:seq
-           (table-info <- (apply 'edbi:table-info-d conn
-                                 (funcall (edbi:dbd-table-info-args dbd) conn)))
-           (column-info <- (apply 'edbi:column-info-d conn 
-                                  (funcall (edbi:dbd-column-info-args dbd) conn)))
-           (type-info <- (edbi:type-info-all-d conn))
-           (lambda (x) 
-             (edbi:ac-editor-word-candidate-update1 
-              conn dbd table-info column-info type-info))))))))
+          (message "DB Word collection is finished.")
+          (edbi:connection-ac-set conn acs)
+          (setq edbi:ac-editor-word-candidate-update-state nil))))))
 
-(defun edbi:ac-editor-word-candidate-update1 (conn dbd table-info column-info type-info)
+(defun edbi:ac-editor-word-candidate-update-tables (conn dbd acs)
   "[internal] "
-  (let (tables table-candidates column-candidates type-candidates)
-    (setq table-candidates
+  (lexical-let ((conn conn) (dbd dbd) (acs acs) table-info tables)
+    (cc:semaphore-with edbi:dbview-query-execute-semaphore
+      (lambda () 
+        (edbi:seq
+         (table-info <- (apply 'edbi:table-info-d conn
+                               (funcall (edbi:dbd-table-info-args dbd) conn)))
+         (lambda (x) 
+           ;; return -> tables
+           (edbi:ac-editor-word-candidate-update-tables1 conn dbd acs table-info)))))))
+
+(defun edbi:ac-editor-word-candidate-update-tables1 (conn dbd acs table-info)
+  "[internal] "
+  (let (tables)
+    (setf (edbi:ac-candidates-tables acs)
           (loop for (catalog schema table type remarks) in 
                 (funcall (edbi:dbd-table-info-filter dbd) table-info)
                 collect
@@ -1456,27 +1731,76 @@ that the current buffer is the query editor buffer."
                   (cons (propertize table 'summary type
                                     'document (format "%s\n%s" type remarks))
                         table))))
-    (setq column-candidates
-          (loop for (table-name column-name type-name column-size nullable remarks) in
-                (funcall (edbi:dbd-column-info-filter dbd) column-info tables)
-                collect
-                (cons (propertize column-name 'summary table-name
-                                  'document (format "%s %s %s\n%s" type-name
-                                                    column-size nullable remarks))
-                      column-name)))
-    (setq type-candidates
-          (funcall (edbi:dbd-type-info-filter dbd) type-info))
+    tables))
 
-    (loop for buf in (edbi:connection-buffers conn)
-          do (with-current-buffer buf
-               (setq edbi:ac-editor-table-candidate-cache table-candidates
-                     edbi:ac-editor-column-candidate-cache column-candidates
-                     edbi:ac-editor-type-candidate-cache type-candidates)))
-    nil))
+(defun edbi:ac-editor-word-candidate-update-columns (conn dbd acs tables)
+  "[internal] "
+  (lexical-let ((conn conn) (dbd dbd) (acs acs)
+                column-header column-rows
+                (tables tables))
+    (deferred:$
+     (deferred:loop tables
+       (lambda (table)
+         (lexical-let ((table table))
+           (cc:semaphore-with edbi:dbview-query-execute-semaphore
+             (lambda (table)
+               ;;(message "COLUMN--: %s" table)
+               (deferred:nextc
+                 (apply 'edbi:column-info-d conn
+                        (funcall (edbi:dbd-column-info-args dbd) conn table))
+                 (lambda (ci) 
+                   ;;(message "COLUMN-INFO: %S" ci)
+                   (unless column-header
+                     (setq column-header (car ci)))
+                   (setq column-rows
+                         (append (cadr ci) column-rows)))))))))
+     (deferred:nextc it
+       (lambda (x) 
+         (let ((column-info (list column-header column-rows)))
+           ;;(message "COLUMN-INFO-ALL: %S" column-info)
+           (edbi:ac-editor-word-candidate-update-columns1 conn dbd acs column-info)))))))
+
+(defun edbi:ac-editor-word-candidate-update-columns1 (conn dbd acs column-info)
+  "[internal] "
+  (setf (edbi:ac-candidates-columns acs)
+         (loop for (table-name column-name type-name column-size nullable remarks) in
+               (funcall (edbi:dbd-column-info-filter dbd) column-info)
+               collect
+               (cons (propertize column-name 'summary table-name
+                                 'document (format "%s %s %s\n%s" type-name
+                                                   column-size nullable remarks))
+                     column-name))) nil)
+
+(defun edbi:ac-editor-word-candidate-update-types (conn dbd acs)
+  "[internal] "
+  (lexical-let ((conn conn) (dbd dbd) (acs acs) type-info)
+    (cc:semaphore-with edbi:dbview-query-execute-semaphore
+      (lambda () 
+        (edbi:seq
+         (type-info <- (edbi:type-info-all-d conn))
+         (lambda (x) 
+           ;;(message "TYPE-INFO: %S" type-info)
+           (edbi:ac-editor-word-candidate-update-types1 conn dbd acs type-info)))))))
+
+(defun edbi:ac-editor-word-candidate-update-types1 (conn dbd acs type-info)
+  "[internal] "
+  (setf (edbi:ac-candidates-types acs)
+        (funcall (edbi:dbd-type-info-filter dbd) type-info)) nil)
+
+(defun edbi:ac-editor-word-candidate-update-keywords (conn dbd acs)
+  (setf (edbi:ac-candidates-keywords acs)
+        (loop for (name . words) in (funcall (edbi:dbd-keywords dbd)) append
+              (loop for word in words
+                    collect
+                    (cons (propertize word 'summary name
+                                      'document name)
+                          word)))) nil)
 
 (eval-after-load 'auto-complete
   '(progn
      (edbi:setup-auto-complete)))
+
+(edbi:dbd-init) ; init
 
 (provide 'edbi)
 ;;; edbi.el ends here
