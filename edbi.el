@@ -371,8 +371,10 @@ The programmer should be aware of the internal state so as not to break the stat
       (setq ret edbi:dbd-default))
     ret))
 
-(defun edbi:dbd-default-table-info-filter (table-info)
-  "[internal] Default table name filter."
+(defun edbi:dbd-extract-table-info (table-info)
+  "[internal] Extract TABLE-INFO as follows:
+
+  ((CATALOG SCHEMA TABLE TYPE REMARKS) ...)"
   (loop 
    with hrow = (and table-info (car table-info))
    with rows = (and table-info (cadr table-info))
@@ -387,12 +389,21 @@ The programmer should be aware of the internal state so as not to break the stat
    for type    = (or (funcall type-f row) "")
    for table   = (funcall table-f row)
    for remarks = (or (funcall remarks-f row) "")
-   if (and table (not (or (string-match "\\(INDEX\\|SYSTEM\\)" type)
-                          (string-match "\\(information_schema\\|SYSTEM\\)" schema))))
+   if table
    collect (list catalog schema table type remarks)))
 
-(defun edbi:dbd-default-column-info-filter (column-info)
-  "[internal] Default column name filter."
+(defun edbi:dbd-default-table-info-filter (table-info)
+  "[internal] Default table name filter."
+  (loop for rec in (edbi:dbd-extract-table-info table-info)
+        for (catalog schema table type remarks) = rec
+        if (not (or (string-match "\\(INDEX\\|SYSTEM\\)" type)
+                    (string-match "\\(information_schema\\|SYSTEM\\)" schema)))
+        collect rec))
+
+(defun edbi:dbd-extract-column-info (column-info)
+  "[internal] Extract COLUMN-INFO as follows:
+
+  ((TABLE-NAME COLUMN-NAME TYPE-NAME COLUMN-SIZE NULLABLE REMARKS)...)"
   (loop
    with hrow = (and column-info (car column-info))
    with rows = (and column-info (cadr column-info))
@@ -409,9 +420,12 @@ The programmer should be aware of the internal state so as not to break the stat
    for column-size = (or (funcall column-size-f row) "")
    for nullable    = (if (equal 0 (funcall nullable-f row)) "NOT NULL" "")
    for remarks     = (or (funcall remarks-f row) "")
-   if (and column-name)
-   collect
-   (list table-name column-name type-name column-size nullable remarks)))
+   if column-name
+   collect (list table-name column-name type-name column-size nullable remarks)))
+
+(defun edbi:dbd-default-column-info-filter (column-info)
+  "[internal] Default column name filter."
+  (edbi:dbd-extract-column-info column-info))
 
 (defun edbi:dbd-default-type-info-filter (type-info)
   "[internal] Default type info filter."
@@ -702,23 +716,11 @@ The programmer should be aware of the internal state so as not to break the stat
 
 (defun edbi:dbd-oracle-table-info-filter (table-info)
   "[internal] Default table name filter."
-  (loop 
-   with hrow = (and table-info (car table-info))
-   with rows = (and table-info (cadr table-info))
-   with catalog-f = (edbi:column-selector hrow "TABLE_CAT")
-   with schema-f  = (edbi:column-selector hrow "TABLE_SCHEM")
-   with table-f   = (edbi:column-selector hrow "TABLE_NAME")
-   with type-f    = (edbi:column-selector hrow "TABLE_TYPE")
-   with remarks-f = (edbi:column-selector hrow "REMARKS")
-   for row in rows
-   for catalog = (funcall catalog-f row)
-   for schema  = (funcall schema-f row)
-   for type    = (or (funcall type-f row) "")
-   for table   = (funcall table-f row)
-   for remarks = (or (funcall remarks-f row) "")
-   if (and table (not (or (string-match "\\(INDEX\\|SYSTEM\\)" type)
-                          (string-match "\\(SYSTEM\\|PUBLIC\\|APEX_\\|MDSYS\\|CTXSYS\\|XDB\\)" schema))))
-   collect (list catalog schema table type remarks)))
+  (loop for rec in (edbi:dbd-extract-table-info table-info)
+        for (catalog schema table type remarks) = rec
+        if (and (string-match "^\\(TABLE\\|VIEW\\)$" type)
+                (not (string-match "^\\(SYS\\|SYSTEM\\|PUBLIC\\|APEX_.+\\|MDSYS\\|CTXSYS\\|XDB\\)$" schema)))
+        collect rec))
 
 (defun edbi:dbd-init-oracle-keywords ()
   "[internal] "
