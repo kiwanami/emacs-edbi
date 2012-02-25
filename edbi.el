@@ -719,7 +719,7 @@ The programmer should be aware of the internal state so as not to break the stat
   (loop for rec in (edbi:dbd-extract-table-info table-info)
         for (catalog schema table type remarks) = rec
         if (and (string-match "^\\(TABLE\\|VIEW\\)$" type)
-                (not (string-match "^\\(SYS\\|SYSTEM\\|PUBLIC\\|APEX_.+\\|MDSYS\\|CTXSYS\\|XDB\\)$" schema)))
+                (not (string-match "^\\(.*SYS\\|SYSTEM\\|PUBLIC\\|APEX_.+\\|XDB\\|ORDDATA\\)$" schema)))
         collect rec))
 
 (defun edbi:dbd-init-oracle-keywords ()
