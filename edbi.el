@@ -686,11 +686,11 @@ The programmer should be aware of the internal state so as not to break the stat
   "[internal] Initialize `edbi:dbd' object for Oracle."
   (make-edbi:dbd :name "dbi:Oracle"
                  :table-info-args 
-                 (lambda (conn) (list nil (edbi:dbd-oracle-user-schema conn) nil nil))
+                 (lambda (conn) (list nil nil nil nil))
                  :table-info-filter
-                 'edbi:dbd-default-table-info-filter
+                 'edbi:dbd-oracle-table-info-filter
                  :column-info-args
-                 (lambda (conn table) (list nil (edbi:dbd-oracle-user-schema conn) table "%"))
+                 (lambda (conn table) (list nil nil table "%"))
                  :column-info-filter
                  'edbi:dbd-default-column-info-filter
                  :type-info-filter
@@ -700,9 +700,25 @@ The programmer should be aware of the internal state so as not to break the stat
                  :keywords
                  'edbi:dbd-init-oracle-keywords))
 
-(defun edbi:dbd-oracle-user-schema (conn)
-  "[interna] Return Oracle schema for user of CONN."
-  (upcase (edbi:data-source-username (edbi:connection-ds conn))))
+(defun edbi:dbd-oracle-table-info-filter (table-info)
+  "[internal] Default table name filter."
+  (loop 
+   with hrow = (and table-info (car table-info))
+   with rows = (and table-info (cadr table-info))
+   with catalog-f = (edbi:column-selector hrow "TABLE_CAT")
+   with schema-f  = (edbi:column-selector hrow "TABLE_SCHEM")
+   with table-f   = (edbi:column-selector hrow "TABLE_NAME")
+   with type-f    = (edbi:column-selector hrow "TABLE_TYPE")
+   with remarks-f = (edbi:column-selector hrow "REMARKS")
+   for row in rows
+   for catalog = (funcall catalog-f row)
+   for schema  = (funcall schema-f row)
+   for type    = (or (funcall type-f row) "")
+   for table   = (funcall table-f row)
+   for remarks = (or (funcall remarks-f row) "")
+   if (and table (not (or (string-match "\\(INDEX\\|SYSTEM\\)" type)
+                          (string-match "\\(SYSTEM\\|PUBLIC\\|APEX_\\|MDSYS\\|CTXSYS\\|XDB\\)" schema))))
+   collect (list catalog schema table type remarks)))
 
 (defun edbi:dbd-init-oracle-keywords ()
   "[internal] "
