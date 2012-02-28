@@ -344,6 +344,8 @@ The programmer should be aware of the internal state so as not to break the stat
 ;;                        this function returns a list of type-name.
 ;;   limit-format       : a format string for the limited select statement.
 ;;   keywords           : return a SQL keywords function
+;;
+;; TODO: collectiong indexes
 
 (defstruct edbi:dbd name table-info-args table-info-filter
   column-info-args column-info-filter type-info-filter limit-format keywords)
