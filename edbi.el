@@ -371,8 +371,10 @@ The programmer should be aware of the internal state so as not to break the stat
       (setq ret edbi:dbd-default))
     ret))
 
-(defun edbi:dbd-default-table-info-filter (table-info)
-  "[internal] Default table name filter."
+(defun edbi:dbd-extract-table-info (table-info)
+  "[internal] Extract TABLE-INFO as follows:
+
+  ((CATALOG SCHEMA TABLE TYPE REMARKS) ...)"
   (loop 
    with hrow = (and table-info (car table-info))
    with rows = (and table-info (cadr table-info))
@@ -387,12 +389,21 @@ The programmer should be aware of the internal state so as not to break the stat
    for type    = (or (funcall type-f row) "")
    for table   = (funcall table-f row)
    for remarks = (or (funcall remarks-f row) "")
-   if (and table (not (or (string-match "\\(INDEX\\|SYSTEM\\)" type)
-                          (string-match "\\(information_schema\\|SYSTEM\\)" schema))))
+   if table
    collect (list catalog schema table type remarks)))
 
-(defun edbi:dbd-default-column-info-filter (column-info)
-  "[internal] Default column name filter."
+(defun edbi:dbd-default-table-info-filter (table-info)
+  "[internal] Default table name filter."
+  (loop for rec in (edbi:dbd-extract-table-info table-info)
+        for (catalog schema table type remarks) = rec
+        if (not (or (string-match "\\(INDEX\\|SYSTEM\\)" type)
+                    (string-match "\\(information_schema\\|SYSTEM\\)" schema)))
+        collect rec))
+
+(defun edbi:dbd-extract-column-info (column-info)
+  "[internal] Extract COLUMN-INFO as follows:
+
+  ((TABLE-NAME COLUMN-NAME TYPE-NAME COLUMN-SIZE NULLABLE REMARKS)...)"
   (loop
    with hrow = (and column-info (car column-info))
    with rows = (and column-info (cadr column-info))
@@ -409,9 +420,12 @@ The programmer should be aware of the internal state so as not to break the stat
    for column-size = (or (funcall column-size-f row) "")
    for nullable    = (if (equal 0 (funcall nullable-f row)) "NOT NULL" "")
    for remarks     = (or (funcall remarks-f row) "")
-   if (and column-name)
-   collect
-   (list table-name column-name type-name column-size nullable remarks)))
+   if column-name
+   collect (list table-name column-name type-name column-size nullable remarks)))
+
+(defun edbi:dbd-default-column-info-filter (column-info)
+  "[internal] Default column name filter."
+  (edbi:dbd-extract-column-info column-info))
 
 (defun edbi:dbd-default-type-info-filter (type-info)
   "[internal] Default type info filter."
@@ -513,7 +527,8 @@ The programmer should be aware of the internal state so as not to break the stat
                        'edbi:dbd-default-keywords))
   (loop for i in (list edbi:dbd-default
                        (edbi:dbd-init-postgresql)
-                       (edbi:dbd-init-mysql))
+                       (edbi:dbd-init-mysql)
+                       (edbi:dbd-init-oracle))
         do
         (edbi:dbd-register i)))
 
@@ -683,9 +698,154 @@ The programmer should be aware of the internal state so as not to break the stat
 
 (defun edbi:dbd-init-oracle ()
   "[internal] Initialize `edbi:dbd' object for Oracle."
-  ;; TODO
-  ;; define edbi:dbd and register 
-  )
+  (make-edbi:dbd :name "dbi:Oracle"
+                 :table-info-args 
+                 (lambda (conn) (list nil nil nil nil))
+                 :table-info-filter
+                 'edbi:dbd-oracle-table-info-filter
+                 :column-info-args
+                 (lambda (conn table) (list nil nil table "%"))
+                 :column-info-filter
+                 'edbi:dbd-default-column-info-filter
+                 :type-info-filter
+                 'edbi:dbd-default-type-info-filter
+                 :limit-format
+                 "SELECT * FROM (SELECT * FROM %table%) WHERE ROWNUM <= %limit%"
+                 :keywords
+                 'edbi:dbd-init-oracle-keywords))
+
+(defun edbi:dbd-oracle-table-info-filter (table-info)
+  "[internal] Default table name filter."
+  (loop for rec in (edbi:dbd-extract-table-info table-info)
+        for (catalog schema table type remarks) = rec
+        if (and (string-match "^\\(TABLE\\|VIEW\\)$" type)
+                (not (string-match "^\\(.*SYS\\|SYSTEM\\|PUBLIC\\|APEX_.+\\|XDB\\|ORDDATA\\)$" schema)))
+        collect rec))
+
+(defun edbi:dbd-init-oracle-keywords ()
+  "[internal] "
+  (list
+   (cons "Function"
+         (list
+          "abs" "acos" "add_months" "ascii" "asciistr" "asin" "atan" "atan2"
+          "avg" "bfilename" "bin_to_num" "bitand" "cast" "ceil" "chartorowid"
+          "chr" "coalesce" "compose" "concat" "convert" "corr" "cos" "cosh"
+          "count" "covar_pop" "covar_samp" "cume_dist" "current_date"
+          "current_timestamp" "current_user" "dbtimezone" "decode" "decompose"
+          "dense_rank" "depth" "deref" "dump" "empty_clob" "existsnode" "exp"
+          "extract" "extractvalue" "first" "first_value" "floor" "following"
+          "from_tz" "greatest" "group_id" "grouping_id" "hextoraw" "initcap"
+          "instr" "lag" "last" "last_day" "last_value" "lead" "least" "length"
+          "ln" "localtimestamp" "lower" "lpad" "ltrim" "make_ref" "max" "min"
+          "mod" "months_between" "new_time" "next_day" "nls_charset_decl_len"
+          "nls_charset_id" "nls_charset_name" "nls_initcap" "nls_lower"
+          "nls_upper" "nlssort" "ntile" "nullif" "numtodsinterval"
+          "numtoyminterval" "nvl" "nvl2" "over" "path" "percent_rank"
+          "percentile_cont" "percentile_disc" "power" "preceding" "rank"
+          "ratio_to_report" "rawtohex" "rawtonhex" "reftohex" "regr_"
+          "regr_avgx" "regr_avgy" "regr_count" "regr_intercept" "regr_r2"
+          "regr_slope" "regr_sxx" "regr_sxy" "regr_syy" "replace" "round"
+          "row_number" "rowidtochar" "rowidtonchar" "rpad" "rtrim"
+          "sessiontimezone" "sign" "sin" "sinh" "soundex" "sqrt" "stddev"
+          "stddev_pop" "stddev_samp" "substr" "sum" "sys_connect_by_path"
+          "sys_context" "sys_dburigen" "sys_extract_utc" "sys_guid" "sys_typeid"
+          "sys_xmlagg" "sys_xmlgen" "sysdate" "systimestamp" "tan" "tanh"
+          "to_char" "to_clob" "to_date" "to_dsinterval" "to_lob" "to_multi_byte"
+          "to_nchar" "to_nclob" "to_number" "to_single_byte" "to_timestamp"
+          "to_timestamp_tz" "to_yminterval" "translate" "treat" "trim" "trunc"
+          "tz_offset" "uid" "unbounded" "unistr" "updatexml" "upper" "user"
+          "userenv" "var_pop" "var_samp" "variance" "vsize" "width_bucket" "xml"
+          "xmlagg" "xmlattribute" "xmlcolattval" "xmlconcat" "xmlelement"
+          "xmlforest" "xmlsequence" "xmltransform"
+          ))
+   (cons "Keyword"
+         (list
+          "ABORT" "ACCESS" "ACCESSED" "ACCOUNT" "ACTIVATE" "ADD" "ADMIN"
+          "ADVISE" "AFTER" "AGENT" "AGGREGATE" "ALL" "ALLOCATE" "ALLOW" "ALTER"
+          "ALWAYS" "ANALYZE" "ANCILLARY" "AND" "ANY" "APPLY" "ARCHIVE"
+          "ARCHIVELOG" "ARRAY" "AS" "ASC" "ASSOCIATE" "AT" "ATTRIBUTE"
+          "ATTRIBUTES" "AUDIT" "AUTHENTICATED" "AUTHID" "AUTHORIZATION" "AUTO"
+          "AUTOALLOCATE" "AUTOMATIC" "AVAILABILITY" "BACKUP" "BEFORE" "BEGIN"
+          "BEHALF" "BETWEEN" "BINDING" "BITMAP" "BLOCK" "BLOCKSIZE" "BODY"
+          "BOTH" "BUFFER_POOL" "BUILD" "BY"  "CACHE" "CALL" "CANCEL"
+          "CASCADE" "CASE" "CATEGORY" "CERTIFICATE" "CHAINED" "CHANGE" "CHECK"
+          "CHECKPOINT" "CHILD" "CHUNK" "CLASS" "CLEAR" "CLONE" "CLOSE" "CLUSTER"
+          "COLUMN" "COLUMN_VALUE" "COLUMNS" "COMMENT" "COMMIT" "COMMITTED"
+          "COMPATIBILITY" "COMPILE" "COMPLETE" "COMPOSITE_LIMIT" "COMPRESS"
+          "COMPUTE" "CONNECT" "CONNECT_TIME" "CONSIDER" "CONSISTENT"
+          "CONSTRAINT" "CONSTRAINTS" "CONSTRUCTOR" "CONTENTS" "CONTEXT"
+          "CONTINUE" "CONTROLFILE" "CORRUPTION" "COST" "CPU_PER_CALL"
+          "CPU_PER_SESSION" "CREATE" "CROSS" "CUBE" "CURRENT" "CURRVAL" "CYCLE"
+          "DANGLING" "DATA" "DATABASE" "DATAFILE" "DATAFILES" "DAY" "DDL"
+          "DEALLOCATE" "DEBUG" "DEFAULT" "DEFERRABLE" "DEFERRED" "DEFINER"
+          "DELAY" "DELETE" "DEMAND" "DESC" "DETERMINES" "DETERMINISTIC"
+          "DICTIONARY" "DIMENSION" "DIRECTORY" "DISABLE" "DISASSOCIATE"
+          "DISCONNECT" "DISTINCT" "DISTINGUISHED" "DISTRIBUTED" "DML" "DROP"
+          "EACH" "ELEMENT" "ELSE" "ENABLE" "END" "EQUALS_PATH" "ESCAPE"
+          "ESTIMATE" "EXCEPT" "EXCEPTIONS" "EXCHANGE" "EXCLUDING" "EXISTS"
+          "EXPIRE" "EXPLAIN" "EXTENT" "EXTERNAL" "EXTERNALLY"
+          "FAILED_LOGIN_ATTEMPTS" "FAST" "FILE" "FINAL" "FINISH" "FLUSH" "FOR"
+          "FORCE" "FOREIGN" "FREELIST" "FREELISTS" "FREEPOOLS" "FRESH" "FROM"
+          "FULL" "FUNCTION" "FUNCTIONS" "GENERATED" "GLOBAL" "GLOBAL_NAME"
+          "GLOBALLY" "GRANT" "GROUP" "GROUPING" "GROUPS" "GUARD" "HASH"
+          "HASHKEYS" "HAVING" "HEAP" "HIERARCHY" "ID" "IDENTIFIED" "IDENTIFIER"
+          "IDLE_TIME" "IMMEDIATE" "IN" "INCLUDING" "INCREMENT" "INDEX" "INDEXED"
+          "INDEXES" "INDEXTYPE" "INDEXTYPES" "INDICATOR" "INITIAL" "INITIALIZED"
+          "INITIALLY" "INITRANS" "INNER" "INSERT" "INSTANCE" "INSTANTIABLE"
+          "INSTEAD" "INTERSECT" "INTO" "INVALIDATE" "IS" "ISOLATION" "JAVA"
+          "JOIN"  "KEEP" "KEY" "KILL" "LANGUAGE" "LEFT" "LESS" "LEVEL"
+          "LEVELS" "LIBRARY" "LIKE" "LIKE2" "LIKE4" "LIKEC" "LIMIT" "LINK"
+          "LIST" "LOB" "LOCAL" "LOCATION" "LOCATOR" "LOCK" "LOG" "LOGFILE"
+          "LOGGING" "LOGICAL" "LOGICAL_READS_PER_CALL"
+          "LOGICAL_READS_PER_SESSION"  "MANAGED" "MANAGEMENT" "MANUAL" "MAP"
+          "MAPPING" "MASTER" "MATCHED" "MATERIALIZED" "MAXDATAFILES"
+          "MAXEXTENTS" "MAXIMIZE" "MAXINSTANCES" "MAXLOGFILES" "MAXLOGHISTORY"
+          "MAXLOGMEMBERS" "MAXSIZE" "MAXTRANS" "MAXVALUE" "MEMBER" "MEMORY"
+          "MERGE" "MIGRATE" "MINEXTENTS" "MINIMIZE" "MINIMUM" "MINUS" "MINVALUE"
+          "MODE" "MODIFY" "MONITORING" "MONTH" "MOUNT" "MOVE" "MOVEMENT" "NAME"
+          "NAMED" "NATURAL" "NESTED" "NEVER" "NEW" "NEXT" "NEXTVAL" "NO"
+          "NOARCHIVELOG" "NOAUDIT" "NOCACHE" "NOCOMPRESS" "NOCOPY" "NOCYCLE"
+          "NODELAY" "NOFORCE" "NOLOGGING" "NOMAPPING" "NOMAXVALUE" "NOMINIMIZE"
+          "NOMINVALUE" "NOMONITORING" "NONE" "NOORDER" "NOPARALLEL" "NORELY"
+          "NORESETLOGS" "NOREVERSE" "NORMAL" "NOROWDEPENDENCIES" "NOSORT"
+          "NOSWITCH" "NOT" "NOTHING" "NOTIMEOUT" "NOVALIDATE" "NOWAIT" "NULL"
+          "NULLS" "OBJECT" "OF" "OFF" "OFFLINE" "OIDINDEX" "OLD" "ON" "ONLINE"
+          "ONLY" "OPEN" "OPERATOR" "OPTIMAL" "OPTION" "OR" "ORDER"
+          "ORGANIZATION" "OUT" "OUTER" "OUTLINE" "OVERFLOW" "OVERRIDING"
+          "PACKAGE" "PACKAGES" "PARALLEL" "PARALLEL_ENABLE" "PARAMETERS"
+          "PARENT" "PARTITION" "PARTITIONS" "PASSWORD" "PASSWORD_GRACE_TIME"
+          "PASSWORD_LIFE_TIME" "PASSWORD_LOCK_TIME" "PASSWORD_REUSE_MAX"
+          "PASSWORD_REUSE_TIME" "PASSWORD_VERIFY_FUNCTION" "PCTFREE"
+          "PCTINCREASE" "PCTTHRESHOLD" "PCTUSED" "PCTVERSION" "PERCENT"
+          "PERFORMANCE" "PERMANENT" "PFILE" "PHYSICAL" "PIPELINED" "PLAN"
+          "POST_TRANSACTION" "PRAGMA" "PREBUILT" "PRESERVE" "PRIMARY" "PRIVATE"
+          "PRIVATE_SGA" "PRIVILEGES" "PROCEDURE" "PROFILE" "PROTECTION" "PUBLIC"
+          "PURGE" "QUERY" "QUIESCE" "QUOTA" "RANGE" "READ" "READS" "REBUILD"
+          "RECORDS_PER_BLOCK" "RECOVER" "RECOVERY" "RECYCLE" "REDUCED" "REF"
+          "REFERENCES" "REFERENCING" "REFRESH" "REGISTER" "REJECT" "RELATIONAL"
+          "RELY" "RENAME" "RESET" "RESETLOGS" "RESIZE" "RESOLVE" "RESOLVER"
+          "RESOURCE" "RESTRICT" "RESTRICT_REFERENCES" "RESTRICTED" "RESULT"
+          "RESUMABLE" "RESUME" "RETENTION" "RETURN" "RETURNING" "REUSE"
+          "REVERSE" "REVOKE" "REWRITE" "RIGHT" "RNDS" "RNPS" "ROLE" "ROLES"
+          "ROLLBACK" "ROLLUP" "ROW" "ROWDEPENDENCIES" "ROWNUM" "ROWS" "SAMPLE"
+          "SAVEPOINT" "SCAN" "SCHEMA" "SCN" "SCOPE" "SEGMENT" "SELECT"
+          "SELECTIVITY" "SELF" "SEQUENCE" "SERIALIZABLE" "SESSION"
+          "SESSIONS_PER_USER" "SET" "SETS" "SETTINGS" "SHARED" "SHARED_POOL"
+          "SHRINK" "SHUTDOWN" "SIBLINGS" "SID" "SINGLE" "SIZE" "SKIP" "SOME"
+          "SORT" "SOURCE" "SPACE" "SPECIFICATION" "SPFILE" "SPLIT" "STANDBY"
+          "START" "STATEMENT_ID" "STATIC" "STATISTICS" "STOP" "STORAGE" "STORE"
+          "STRUCTURE" "SUBPARTITION" "SUBPARTITIONS" "SUBSTITUTABLE"
+          "SUCCESSFUL" "SUPPLEMENTAL" "SUSPEND" "SWITCH" "SWITCHOVER" "SYNONYM"
+          "SYS" "SYSTEM" "TABLE" "TABLES" "TABLESPACE" "TEMPFILE" "TEMPLATE"
+          "TEMPORARY" "TEST" "THAN" "THEN" "THREAD" "THROUGH" "TIME_ZONE"
+          "TIMEOUT" "TO" "TRACE" "TRANSACTION" "TRIGGER" "TRIGGERS" "TRUNCATE"
+          "TRUST" "TYPE" "TYPES" "UNARCHIVED" "UNDER" "UNDER_PATH" "UNDO"
+          "UNIFORM" "UNION" "UNIQUE" "UNLIMITED" "UNLOCK" "UNQUIESCE"
+          "UNRECOVERABLE" "UNTIL" "UNUSABLE" "UNUSED" "UPDATE" "UPGRADE" "USAGE"
+          "USE" "USING" "VALIDATE" "VALIDATION" "VALUE" "VALUES" "VARIABLE"
+          "VARRAY" "VERSION" "VIEW" "WAIT" "WHEN" "WHENEVER" "WHERE" "WITH"
+          "WITHOUT" "WNDS" "WNPS" "WORK" "WRITE" "XMLDATA" "XMLSCHEMA" "XMLTYPE"
+          ))))
 
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -1127,6 +1287,13 @@ This function kills the old buffer if it exists."
 (defvar edbi:dbview-show-table-data-default-limit 50
   "Maximum row numbers for default table viewer SQL.")
 
+(defun edbi:dbview-show-data-sql (conn table-name)
+  (if edbi:dbview-show-table-data-default-limit
+      (edbi:dbd-limit-format-fill
+       (edbi:dbd-get conn) table-name
+       edbi:dbview-show-table-data-default-limit)
+    (format "SELECT * FROM %s" table-name)))
+
 (defun edbi:dbview-show-table-data-command ()
   (interactive)
   (let ((conn edbi:connection))
@@ -1135,11 +1302,8 @@ This function kills the old buffer if it exists."
        (destructuring-bind (catalog schema table-name) table
          (edbi:dbview-query-editor-open 
           conn 
-          :init-sql
-          (if edbi:dbview-show-table-data-default-limit
-              (format "SELECT * FROM %s LIMIT %s" 
-                      table-name edbi:dbview-show-table-data-default-limit)
-            (format "SELECT * FROM %s" table-name)) :executep t))))))
+          :init-sql (edbi:dbview-show-data-sql conn table-name)
+          :executep t))))))
 
 
 ;; query editor and viewer
@@ -1170,7 +1334,7 @@ This function kills the old buffer if it exists."
   (setq comment-start "--")
   (make-local-variable 'paragraph-separate)
   (make-local-variable 'paragraph-start)
-  (setq paragraph-separate "[\f]*$"	paragraph-start "[\n\f]")
+  (setq paragraph-separate "[\f]*$"     paragraph-start "[\n\f]")
   ;; Abbrevs
   (setq local-abbrev-table sql-mode-abbrev-table)
   (setq abbrev-all-caps 1)
@@ -1561,12 +1725,8 @@ that the current buffer is the query editor buffer."
       (destructuring-bind (conn catalog schema table-name) args
         (edbi:dbview-query-editor-open 
          conn 
-         :init-sql
-         (if edbi:dbview-show-table-data-default-limit
-             (edbi:dbd-limit-format-fill
-              (edbi:dbd-get conn) table-name
-              edbi:dbview-show-table-data-default-limit)
-           (format "SELECT * FROM %s" table-name)) :executep t)))))
+         :init-sql (edbi:dbview-show-data-sql conn table-name)
+         :executep t)))))
 
 (defun edbi:dbview-tabledef-query-editor-command ()
   (interactive)
