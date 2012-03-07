@@ -1,9 +1,11 @@
 ;;; edbi.el --- Database independent interface for Emacs
 
-;; Copyright (C) 2011  SAKURAI Masashi
+;; Copyright (C) 2011, 2012  SAKURAI Masashi
 
-;; Author:  <m.sakurai at kiwanami.net>
+;; Author: SAKURAI Masashi <m.sakurai at kiwanami.net>
+;; Version: 0.1.0
 ;; Keywords: database, epc
+;; URL: https://github.com/kiwanami/emacs-edbi
 
 ;; This program is free software; you can redistribute it and/or modify
 ;; it under the terms of the GNU General Public License as published by
