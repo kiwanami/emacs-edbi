@@ -1431,7 +1431,10 @@ that the current buffer is the query editor buffer."
         buf)))))
 
 (defun* edbi:dbview-query-editor-open (conn &key init-sql executep force-create-p)
-  "[internal] "
+  "[internal] Open a query-editor buffer and display the buffer by the switch-to-buffer.
+INIT-SQL is a string which is inserted in the buffer.
+If EXECUTEP is non-nil, the INIT-SQL is executed after the displaying the buffer.
+If FORCE-CREATE-P is non-nil, this function creates a new buffer."
   (let ((buf (edbi:dbview-query-editor-create-buffer conn force-create-p)))
     (with-current-buffer buf
       (set (make-local-variable 'edbi:connection) conn)
