@@ -71,6 +71,7 @@
 ;; - C-c q    : kill buffer
 ;; - M-p      : SQL history back
 ;; - M-n      : SQL history forward
+;; - C-c C-k  : Clear buffer
 
 ;; * Query result viewer
 ;; You can browser the results for executed SQL.
@@ -1319,6 +1320,7 @@ This function kills the old buffer if it exists."
      ("C-c q"   . edbi:dbview-query-editor-quit-command)
      ("M-p"     . edbi:dbview-query-editor-history-back-command)
      ("M-n"     . edbi:dbview-query-editor-history-forward-command)
+     ("C-c C-k" . edbi:dbview-query-editor-clear-buffer-command)
      )) "Keymap for the `edbi:sql-mode'.")
 
 (defvar edbi:sql-mode-hook nil  "edbi:sql-mode-hook.")
@@ -1406,6 +1408,9 @@ that the current buffer is the query editor buffer."
   "[internal] Reset the history counter `edbi:history-index'."
   (setq edbi:history-index 0))
 
+(defun edbi:dbview-query-editor-clear-buffer-command ()
+  (interactive)
+  (erase-buffer))
 
 (defun edbi:dbview-query-editor-create-buffer (conn &optional force-create-p)
   "[internal] Create a buffer for query editor."
