@@ -1475,10 +1475,14 @@ that the current buffer is the query editor buffer."
           " " "-%-")))
 
 (defun edbi:dbview-query-editor-execute-command ()
-  "Execute SQL and show result buffer."
-  (interactive)
+  "Execute SQL and show result buffer.
+If the region is active in the query buffer, the selected string is executed."
+  (interactive) 
   (when edbi:connection
-    (let ((sql (buffer-substring-no-properties (point-min) (point-max)))
+    (let ((sql
+           (if (region-active-p)
+               (buffer-substring-no-properties (region-beginning) (region-end))
+             (buffer-substring-no-properties (point-min) (point-max))))
           (result-buf edbi:result-buffer))
       (edbi:dbview-query-editor-history-reset-index)
       (unless (and result-buf (buffer-live-p result-buf))
