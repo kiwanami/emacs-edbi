@@ -43,7 +43,7 @@
       (wlf:select wm 'database)))))
 
 (defun e2wm:dp-edbi-leave (wm)
-  (setq prev-selected-buffer nil))
+  (setq e2wm:prev-selected-buffer nil))
 
 (defun e2wm:dp-edbi-show-buffers (wm dbview-buf)
   (let* ((conn (buffer-local-value 'edbi:connection dbview-buf))
