@@ -3,7 +3,7 @@
 ;; Copyright (C) 2011, 2012  SAKURAI Masashi
 
 ;; Author: SAKURAI Masashi <m.sakurai at kiwanami.net>
-;; Version: 0.1.0
+;; Version: 0.1.1
 ;; Keywords: database, epc
 ;; URL: https://github.com/kiwanami/emacs-edbi
 
@@ -1574,6 +1574,7 @@ If the region is active in the query buffer, the selected string is executed."
   (epc:define-keymap
    '(
      ("q"   . edbi:dbview-query-result-quit-command)
+     ("SPC" . edbi:dbview-query-result-quicklook-command)
      )) "Keymap for the query result viewer buffer.")
 
 (defvar edbi:before-win-num nil "[internal] A buffer local variable.")
@@ -1610,6 +1611,43 @@ If the region is active in the query buffer, the selected string is executed."
                (> win-num edbi:before-win-num))
       (delete-window))
     (kill-buffer cbuf)))
+
+(defvar edbi:dbview-query-result-quicklook-buffer " *dbview-query-result-quicklook*" "[internal] ")
+
+(defun edbi:dbview-query-result-quicklook-command ()
+  "Display the cell content on the popup buffer."
+  (interactive)
+  (edbi:dbview-with-cp
+   (let* ((cell-data (ctbl:cp-get-selected-data-cell cp))
+          (buf (get-buffer-create edbi:dbview-query-result-quicklook-buffer)))
+     (with-current-buffer buf
+       (let (buffer-read-only)
+         (edbi:dbview-query-result-quicklook-mode)
+         (erase-buffer)
+         (insert cell-data))
+       (setq buffer-read-only t))
+     (pop-to-buffer buf))))
+
+(define-derived-mode edbi:dbview-query-result-quicklook-mode
+  text-mode "Result Quicklook Mode"
+  "Major mode for quicklooking the result data.
+\\{edbi:dbview-query-result-quicklook-mode-map}"
+  (setq case-fold-search nil))
+
+(defun edbi:dbview-query-result-quicklook-copy-command ()
+  "Copy the whole content."
+  (interactive)
+  (mark-whole-buffer)
+  (copy-region-as-kill (point-min) (point-max)))
+
+(setq edbi:dbview-query-result-quicklook-mode-map
+      (epc:add-keymap
+       edbi:dbview-query-result-quicklook-mode-map
+       '(
+         ("SPC" . kill-this-buffer)
+         ("q"   . kill-this-buffer)
+         ("C"   . edbi:dbview-query-result-quicklook-copy-command)
+         )))
 
 
 ;; table definition viewer
