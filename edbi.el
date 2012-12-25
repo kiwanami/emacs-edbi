@@ -891,12 +891,12 @@ The programmer should be aware of the internal state so as not to break the stat
   (let ((dsc (edbi:data-source
               (edbi:data-source-uri ds)
               (edbi:data-source-username ds) "")))
-    (when (loop for i in edbi:ds-history-list
-                if (equal (edbi:data-source-uri i)
-                          (edbi:data-source-uri dsc))
-                return nil
-                finally return t)
-      (push dsc edbi:ds-history-list))
+    (setq edbi:ds-history-list
+          (remove-if (lambda (i) 
+                       (equal (edbi:data-source-uri i)
+                              (edbi:data-source-uri dsc))) 
+                     edbi:ds-history-list))
+    (push dsc edbi:ds-history-list)
     (setq edbi:ds-history-list
           (loop for i in edbi:ds-history-list
                 for idx from 0 below (min (length edbi:ds-history-list)
