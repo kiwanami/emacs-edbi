@@ -17,11 +17,15 @@ This program depends on following programs:
 Place this program (edbi.el and edbi-bridge.pl) in your load path
 and add following code.
 
+```lisp
 (require 'edbi)
+```
 
 ## Usage:
 
 M-x `edbi:open-db-viewer' opens a dialog for DB connection.
+
+![DB connection](https://cacoo.com/diagrams/VdRPw8hjXiezJJud-2B7F2.png)
 
 - Data Source : URI string for DBI::connect (Ex. dbi:SQLite:dbname=/path/db.sqlite )
 - User Name, Auth : user name and password for DBI::connect
@@ -31,6 +35,9 @@ M-x `edbi:open-db-viewer' opens a dialog for DB connection.
 ### Database view
 
 This buffer enumerates tables and views.
+
+![DB Tables](https://cacoo.com/diagrams/VdRPw8hjXiezJJud-30BC3.png)
+
 Check the key-bind `edbi:dbview-keymap'.
 
 - j,k, n,p : navigation for rows
@@ -42,6 +49,9 @@ Check the key-bind `edbi:dbview-keymap'.
 ### Table definition view
 
 This buffer shows the table definition information.
+
+![Table Definition](https://cacoo.com/diagrams/VdRPw8hjXiezJJud-B5E39.png)
+
 Check the key-bind `edbi:dbview-table-keymap'.
 - j,k, n,p : navigation for rows
 - c        : switch to query editor buffer
@@ -52,6 +62,9 @@ Check the key-bind `edbi:dbview-table-keymap'.
 
 You can edit SQL in this buffer, which supports SQL syntax
 highlight and auto completion by auto-complete.el.
+
+![SQL Editor](https://cacoo.com/diagrams/VdRPw8hjXiezJJud-30392.png)
+
 Check the key-bind `edbi:sql-mode-map'.
 
 - C-c C-c  : Execute SQL
@@ -62,9 +75,17 @@ Check the key-bind `edbi:sql-mode-map'.
 ### Query result viewer
 
 You can browser the results for executed SQL.
+
+![Query Results](https://cacoo.com/diagrams/VdRPw8hjXiezJJud-E9A0C.png)
+
 Check the key-bind `edbi:dbview-query-result-keymap'.
 - j,k, n,p : navigation for rows
+- SPC      : display the whole data at the current cell. (hitting the SPC again, it clears the popup.)
 - q        : kill buffer
+
+## Navigation summary
+
+![Navigation Summary](https://cacoo.com/diagrams/VdRPw8hjXiezJJud-8D899.png)
 
 ----
 (C) 2012 SAKURAI Masashi All rights reserved. m.sakurai at kiwanami.net
