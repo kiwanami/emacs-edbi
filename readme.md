@@ -5,6 +5,19 @@ and provides DB-accessing API and the simple management UI.
 
 ## Installation:
 
+### Package installation
+
+If you use package.el with Marmalade (http://marmalade-repo.org/), you just select the package 'edbi' and install it.
+
+Next, you install the perl module `RPC::EPC::Service' with CPAN. 
+
+Example:
+```
+$ cpan RPC::EPC::Service
+```
+
+### Manual installation
+
 This program depends on following programs:
 
 - deferred.el, concurrent.el / https://github.com/kiwanami/emacs-deferred
