@@ -1131,6 +1131,7 @@ This function kills the old buffer if it exists."
 
 ;; database viewer
 
+;;;###autoload
 (defun edbi:open-db-viewer ()
   "Open Database viewer buffer."
   (interactive)
