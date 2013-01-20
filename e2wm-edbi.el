@@ -1,3 +1,4 @@
+(require 'e2wm)
 (require 'edbi)
 
 ;;; edbi / DB perspective
@@ -93,6 +94,7 @@
 
 ;; Commands / Keybindings
 
+;;;###autoload
 (defun e2wm:dp-edbi ()
   (interactive)
   (e2wm:pst-change 'edbi))
@@ -125,7 +127,3 @@
          ("prefix E" . e2wm:dp-edbi-editor-maximize-toggle-command)
          ("prefix R" . e2wm:dp-edbi-result-maximize-toggle-command))
        e2wm:prefix-key))
-
-;; Bind [Super-d]
-(global-set-key (kbd "s-d") 'e2wm:dp-edbi)
-(global-set-key (kbd "M-s-d") 'e2wm:dp-edbi)
