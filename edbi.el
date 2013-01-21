@@ -83,7 +83,8 @@
 ;;; Code:
 
 
-(eval-when-compile (require 'cl))
+(eval-when-compile (require 'cl)
+                   (require 'auto-complete nil t))
 (require 'epc)
 (require 'sql)
 
@@ -1130,6 +1131,7 @@ This function kills the old buffer if it exists."
 
 ;; database viewer
 
+;;;###autoload
 (defun edbi:open-db-viewer ()
   "Open Database viewer buffer."
   (interactive)

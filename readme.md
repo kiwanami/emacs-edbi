@@ -100,5 +100,17 @@ Check the key-bind `edbi:dbview-query-result-keymap'.
 
 ![Navigation Summary](https://cacoo.com/diagrams/VdRPw8hjXiezJJud-8D899.png)
 
+
+## E2WM perspective
+
+![E2WM perspective](https://cacoo.com/diagrams/VdRPw8hjXiezJJud-23532.png?width=450)
+
+Here is an example setup to open EDBI perspective with Super-d.
+
+```cl
+(autoload 'e2wm:dp-edbi "e2wm-edbi" nil t)
+(global-set-key (kbd "s-d") 'e2wm:dp-edbi)
+```
+
 ----
 (C) 2012 SAKURAI Masashi All rights reserved. m.sakurai at kiwanami.net
