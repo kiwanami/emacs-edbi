@@ -1183,6 +1183,7 @@ This function kills the old buffer if it exists."
     (with-current-buffer db-buf
       (let (buffer-read-only)
         (erase-buffer)
+        (setq truncate-lines t)
         (set (make-local-variable 'edbi:connection) conn)
         (insert (edbi:dbview-header (edbi:connection-ds conn))
                 "\n[connecting...]")))
