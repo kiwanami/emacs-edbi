@@ -929,6 +929,7 @@ The programmer should be aware of the internal state so as not to break the stat
     (when (file-exists-p file)
       (let ((buf (find-file-noselect file)) ret)
         (unwind-protect
+			(with-current-buffer buf (goto-char 0))
             (setq ret (loop for i in (read buf)
                             collect 
                             (edbi:data-source (car i) (nth 1 i) "")))
