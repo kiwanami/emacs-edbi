@@ -36,7 +36,7 @@
   (let ((dbview-buf (get-buffer edbi:dbview-buffer-name)))
     (cond
      ((null dbview-buf)
-      (e2wm:pst-buffer-set 'database e2wm:c-blank-buffer)
+      (e2wm:pst-buffer-set 'database (e2wm:get-blank-buffer))
       (wlf:hide wm 'editor)
       (e2wm:pst-buffer-set 'result (edbi:open-db-viewer) t t))
      (t
