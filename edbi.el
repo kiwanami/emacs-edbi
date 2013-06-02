@@ -3,7 +3,7 @@
 ;; Copyright (C) 2011, 2012  SAKURAI Masashi
 
 ;; Author: SAKURAI Masashi <m.sakurai at kiwanami.net>
-;; Version: 0.1.1
+;; Version: 0.1.2
 ;; Keywords: database, epc
 ;; URL: https://github.com/kiwanami/emacs-edbi
 
@@ -929,10 +929,11 @@ The programmer should be aware of the internal state so as not to break the stat
     (when (file-exists-p file)
       (let ((buf (find-file-noselect file)) ret)
         (unwind-protect
-			(with-current-buffer buf (goto-char 0))
-            (setq ret (loop for i in (read buf)
-                            collect 
-                            (edbi:data-source (car i) (nth 1 i) "")))
+			(with-current-buffer buf
+              (goto-char (point-min))
+              (setq ret (loop for i in (read buf)
+                              collect
+                              (edbi:data-source (car i) (nth 1 i) ""))))
           (kill-buffer buf))
         (setq edbi:ds-history-list ret)))))
 
