@@ -1605,8 +1605,8 @@ If the region is active in the query buffer, the selected string is executed."
             :data rows
             :sort-state nil)
            :custom-map edbi:dbview-query-result-keymap))
-    (ctbl:cp-set-selected-cell table-cp '(0 . 0))
     (with-current-buffer buf
+      (ctbl:cp-set-selected-cell table-cp '(0 . 0))
       (set (make-local-variable 'edbi:before-win-num) (length (window-list)))
       (edbi:dbview-query-result-modeline (edbi:connection-ds conn)))
     (pop-to-buffer buf)))
