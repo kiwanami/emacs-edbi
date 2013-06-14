@@ -1197,7 +1197,12 @@ This function kills the old buffer if it exists."
          (table-info <- (apply 'edbi:table-info-d conn
                                (funcall (edbi:dbd-table-info-args dbd) conn)))
          (lambda (x)
-           (edbi:dbview-create-buffer conn dbd table-info))
+           (if (> (length table-info) 2)
+               (edbi:dbview-create-buffer conn dbd table-info))
+           (with-current-buffer db-buf
+             (let (buffer-read-only)
+               (delete-region (line-beginning-position) (point))
+               (insert "No tables."))))
          (lambda (x)
            (run-hook-with-args 'edbi:dbview-update-hook conn)))
         (lambda (err)
