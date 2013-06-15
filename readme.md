@@ -7,7 +7,7 @@ and provides DB-accessing API and the simple management UI.
 
 ### Package installation
 
-If you use package.el with Marmalade (http://marmalade-repo.org/), you just select the package 'edbi' and install it.
+If you use package.el with [Marmalade](http://marmalade-repo.org/) or [MELPA](http://melpa.milkbox.net/), you just select the package 'edbi' and install it.
 
 Next, you install the perl module `RPC::EPC::Service' with CPAN. 
 
