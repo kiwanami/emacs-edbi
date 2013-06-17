@@ -1197,12 +1197,7 @@ This function kills the old buffer if it exists."
          (table-info <- (apply 'edbi:table-info-d conn
                                (funcall (edbi:dbd-table-info-args dbd) conn)))
          (lambda (x)
-           (if (> (length table-info) 2)
-               (edbi:dbview-create-buffer conn dbd table-info))
-           (with-current-buffer db-buf
-             (let (buffer-read-only)
-               (delete-region (line-beginning-position) (point))
-               (insert "No tables."))))
+           (edbi:dbview-create-buffer conn dbd table-info))
          (lambda (x)
            (run-hook-with-args 'edbi:dbview-update-hook conn)))
         (lambda (err)
@@ -1223,20 +1218,24 @@ This function kills the old buffer if it exists."
       (let (buffer-read-only)
         (erase-buffer)
         (insert (edbi:dbview-header (edbi:connection-ds conn) data))
-        (setq table-cp
-              (ctbl:create-table-component-region
-               :model
-               (make-ctbl:model
-                :column-model
-                (list (make-ctbl:cmodel :title "Schema"    :align 'left)
-                      (make-ctbl:cmodel :title "Table Name" :align 'left)
-                      (make-ctbl:cmodel :title "Type"  :align 'center)
-                      (make-ctbl:cmodel :title "Remarks"  :align 'left))
-                :data data
-                :sort-state '(1 2))
-               :keymap edbi:dbview-keymap))
-        (goto-char (point-min))
-        (ctbl:cp-set-selected-cell table-cp '(0 . 0)))
+        (cond
+         ((null data)
+          (insert "\nNo tables."))
+         (t
+          (setq table-cp
+                (ctbl:create-table-component-region
+                 :model
+                 (make-ctbl:model
+                  :column-model
+                  (list (make-ctbl:cmodel :title "Schema"    :align 'left)
+                        (make-ctbl:cmodel :title "Table Name" :align 'left)
+                        (make-ctbl:cmodel :title "Type"  :align 'center)
+                        (make-ctbl:cmodel :title "Remarks"  :align 'left))
+                  :data data
+                  :sort-state '(1 2))
+                 :keymap edbi:dbview-keymap))
+          (goto-char (point-min))
+          (ctbl:cp-set-selected-cell table-cp '(0 . 0)))))
       (setq buffer-read-only t)
       buf)))
 
