@@ -64,7 +64,7 @@ sub edbi_fetch {
     for (my $i = 0; $i < $num; $i++) {
       my $row = $sth->fetchrow_arrayref();
       last if $row eq undef;
-      push @$ret, $row;
+      push @$ret, [@$row];
     }
     return $ret;
   }

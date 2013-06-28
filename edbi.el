@@ -1,9 +1,9 @@
 ;;; edbi.el --- Database independent interface for Emacs
 
-;; Copyright (C) 2011, 2012  SAKURAI Masashi
+;; Copyright (C) 2011, 2012, 2013  SAKURAI Masashi
 
 ;; Author: SAKURAI Masashi <m.sakurai at kiwanami.net>
-;; Version: 0.1.2
+;; Version: 0.1.3
 ;; Keywords: database, epc
 ;; URL: https://github.com/kiwanami/emacs-edbi
 
@@ -1298,8 +1298,8 @@ This function kills the old buffer if it exists."
       (edbi:dbview-with-cp
        (edbi:dbview-query-editor-open conn :force-create-p t)))))
 
-(defvar edbi:dbview-show-table-data-default-limit 50
-  "Maximum row numbers for default table viewer SQL.")
+(defvar edbi:dbview-show-table-data-default-limit nil
+  "A maximum row number for default table viewer SQL.")
 
 (defun edbi:dbview-show-data-sql (conn table-name)
   (if edbi:dbview-show-table-data-default-limit
@@ -1509,8 +1509,11 @@ If the region is active in the query buffer, the selected string is executed."
   (interactive)
   (cc:semaphore-release-all edbi:dbview-query-execute-semaphore))
 
+(defvar edbi:dbview-query-result-fetch-num 100
+  "A number of rows for single fetching.")
+
 (defun edbi:dbview-query-execute (conn sql result-buf)
-  "[internal] "
+  "[internal] Execute SQL and rendering results."
   (lexical-let ((conn conn)
                 (sql sql) (result-buf result-buf))
     (cc:semaphore-with edbi:dbview-query-execute-semaphore
@@ -1529,7 +1532,7 @@ If the region is active in the query buffer, the selected string is executed."
                (lexical-let (rows header (exec-result exec-result))
                  (edbi:seq
                   (header <- (edbi:fetch-columns-d conn))
-                  (rows <- (edbi:fetch-d conn))
+                  (rows <- (edbi:fetch-d conn edbi:dbview-query-result-fetch-num))
                   (lambda (x)
                     (cond
                      ((or rows (equal "0E0" exec-result)) ; select results
@@ -1594,26 +1597,49 @@ If the region is active in the query buffer, the selected string is executed."
 
 (defun edbi:dbview-query-result-open (conn buf header rows)
   "[internal] Display SELECT results."
-  (let (table-cp (param (copy-ctbl:param ctbl:default-rendering-param)))
-    (setf (ctbl:param-fixed-header param) edbi:query-result-fix-header)
-    (setq table-cp
-          (ctbl:create-table-component-buffer
-           :buffer buf :param param
-           :model
-           (make-ctbl:model
-            :column-model
-            (loop for i in header
-                  collect (make-ctbl:cmodel
-                           :title (format "%s" i) :align 'left
-                           :min-width 5 :max-width edbi:query-result-column-max-width))
-            :data rows
-            :sort-state nil)
-           :custom-map edbi:dbview-query-result-keymap))
-    (with-current-buffer buf
-      (ctbl:cp-set-selected-cell table-cp '(0 . 0))
-      (set (make-local-variable 'edbi:before-win-num) (length (window-list)))
-      (edbi:dbview-query-result-modeline (edbi:connection-ds conn)))
-    (pop-to-buffer buf)))
+  (lexical-let ((conn conn) (rows rows))
+    (let (table-cp async-model
+          (limit edbi:dbview-query-result-fetch-num)
+          (param (copy-ctbl:param ctbl:default-rendering-param)))
+      (setf (ctbl:param-fixed-header param) edbi:query-result-fix-header)
+      (setq async-model
+            (if (< (length rows) limit) rows
+              (make-ctbl:async-model
+               :request
+               (lambda (row-num len resf errf)
+                 (lexical-let ((len len) (resf resf) (errf errf))
+                   (cond
+                    (rows (funcall resf rows)
+                          (setq rows nil))
+                    (t (deferred:$
+                         (edbi:fetch-d conn len)
+                         (deferred:nextc it
+                           (lambda (rs)
+                             (funcall resf rs))) ; should automatically stop
+                         (deferred:error it
+                           (lambda (err)
+                             (funcall errf err))))))))
+               :init-num limit :more-num limit
+               :reset (lambda () (message " EDBI:reset") nil)
+               :cancel (lambda () (message " EDBI:cancel") nil))))
+      (setq table-cp
+            (ctbl:create-table-component-buffer
+             :buffer buf :param param
+             :model
+             (make-ctbl:model
+              :column-model
+              (loop for i in header
+                    collect (make-ctbl:cmodel
+                             :title (format "%s" i) :align 'left
+                             :min-width 5 :max-width edbi:query-result-column-max-width))
+              :data async-model
+              :sort-state nil)
+             :custom-map edbi:dbview-query-result-keymap))
+      (with-current-buffer buf
+        (ctbl:cp-set-selected-cell table-cp '(0 . 0))
+        (set (make-local-variable 'edbi:before-win-num) (length (window-list)))
+        (edbi:dbview-query-result-modeline (edbi:connection-ds conn)))
+      (pop-to-buffer buf))))
 
 (defun edbi:dbview-query-result-quit-command ()
   "Quit the query result buffer."
