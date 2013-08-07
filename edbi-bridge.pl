@@ -16,7 +16,14 @@ sub edbi_connect {
       $dbh->disconnect();
     }
   }
-  our $dbh = DBI->connect($data_source, $username, $auth);
+
+  our $dbh = DBI->connect($data_source, $username, $auth)
+      or die("Could not connect to database:
+Data Source ($data_source)
+User Name: ($username):
+DBI error: ($DBI::errstr)
+");
+
   return $dbh->get_info(18);
 }
 
