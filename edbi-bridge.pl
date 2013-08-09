@@ -11,6 +11,10 @@ our $sth = undef;
 sub edbi_connect {
   my ($args) = @_;
   my ($data_source,$username,$auth) = @$args;
+
+  # No input _probably_ means "no password" rather than empty string
+  $auth = undef if($auth eq "");
+
   if ($dbh) {
     eval {
       $dbh->disconnect();
