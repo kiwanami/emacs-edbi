@@ -9,12 +9,15 @@ and provides DB-accessing API and the simple management UI.
 
 If you use package.el with [Marmalade](http://marmalade-repo.org/) or [MELPA](http://melpa.milkbox.net/), you just select the package 'edbi' and install it.
 
-Next, you install the perl module `RPC::EPC::Service' with CPAN. 
+Next, you install the perl module `RPC::EPC::Service', DBI and Database drivers with CPAN. 
 
 Example:
 ```
-$ cpan RPC::EPC::Service
+$ cpan RPC::EPC::Service DBI DBD::SQLite DBD::Pg DBD::mysql
 ```
+
+Here, SQLite, Postgresql and MySQL drivers will be installed, in addition to the EPC module.
+Of course, you can choose the drivers for your environment.
 
 ### Manual installation
 
@@ -33,6 +36,14 @@ and add following code.
 ```lisp
 (require 'edbi)
 ```
+
+### Helper application
+
+One can install some helper applications:
+
+- [edbi-django](https://github.com/proofit404/edbi-django)
+-- This program connects django project database quickly.
+-- (You can find more edbi projects at the author's repo, https://github.com/proofit404/edbi-sqlite3, https://github.com/proofit404/edbi-database-url)
 
 ## Usage:
 
@@ -112,5 +123,9 @@ Here is an example setup to open EDBI perspective with Super-d.
 (global-set-key (kbd "s-d") 'e2wm:dp-edbi)
 ```
 
+# Emacs DBI API
+
+TODO...
+
 ----
-(C) 2012 SAKURAI Masashi All rights reserved. m.sakurai at kiwanami.net
+(C) 2012,2013,2014 SAKURAI Masashi All rights reserved. m.sakurai at kiwanami.net
