@@ -540,7 +540,7 @@ The programmer should be aware of the internal state so as not to break the stat
 
 (defun edbi:dbd-init-postgresql ()
   "[internal] Initialize `edbi:dbd' object for Postgresql."
-        (make-edbi:dbd :name "dbi:SQLite"
+        (make-edbi:dbd :name "dbi:Pg"
                        :table-info-args
                        (lambda (conn) (list nil nil nil nil))
                        :table-info-filter
