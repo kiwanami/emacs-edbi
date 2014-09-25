@@ -1,4 +1,4 @@
-(require edbi)
+(require 'edbi)
 
 ;; connect
 (setq conn1 (edbi:start))
