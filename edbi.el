@@ -90,6 +90,20 @@
 
 ;;; Configurations
 
+(defgroup edbi nil "Emacs Database Interface"
+  :group 'tools
+  :group 'extensions)
+
+(defcustom edbi:completion-tool 'auto-complete
+  "Completion engine which you use. You can choose `auto-complete'(defaut) or `none'.
+  If you want to customize the completion mechanism in yourself, selecting
+  `none', edbi do nothing about completion."
+  :type '(choice
+          (const none)
+          (const auto-complete)
+          )
+  :group 'edbi)
+
 (defvar edbi:driver-libpath (file-name-directory (or load-file-name "."))
   "directory for the driver program.")
 
@@ -536,7 +550,9 @@ The programmer should be aware of the internal state so as not to break the stat
                        (edbi:dbd-init-mysql)
                        (edbi:dbd-init-oracle))
         do
-        (edbi:dbd-register i)))
+        (edbi:dbd-register i))
+  ;; add word-collection hook here for completion-at-point-functions
+  (add-hook 'edbi:dbview-update-hook 'edbi:ac-editor-word-candidate-update))
 
 (defun edbi:dbd-init-postgresql ()
   "[internal] Initialize `edbi:dbd' object for Postgresql."
@@ -1353,6 +1369,7 @@ This function kills the old buffer if it exists."
   ;; Abbrevs
   (setq local-abbrev-table sql-mode-abbrev-table)
   (setq abbrev-all-caps 1)
+  (add-hook 'completion-at-point-functions 'edbi:completion-at-point-function nil t)
   ;; Run hook
   (sql-product-font-lock nil t))
 
@@ -1885,32 +1902,58 @@ If the region is active in the query buffer, the selected string is executed."
   "Face for the type selected candidate."
   :group 'edbi)
 
-(defun edbi:setup-auto-complete ()
-  "Initialization for auto-complete."
-  (ac-define-source edbi:tables
-    '((candidates . edbi:ac-editor-table-candidates)
-      (candidate-face . edbi:face-ac-table-candidate-face)
-      (selection-face . edbi:face-ac-table-selection-face)
-      (symbol . "T")))
-  (ac-define-source edbi:columns
-    '((candidates . edbi:ac-editor-column-candidates)
-      (candidate-face . edbi:face-ac-column-candidate-face)
-      (selection-face . edbi:face-ac-column-selection-face)
-      (symbol . "C")))
-  (ac-define-source edbi:types
-    '((candidates . edbi:ac-editor-type-candidates)
-      (candidate-face . edbi:face-ac-type-candidate-face)
-      (selection-face . edbi:face-ac-type-selection-face)
-      (symbol . "+")))
-  (ac-define-source edbi:keywords
-    '((candidates . edbi:ac-editor-keyword-candidates)
-      (symbol . "K")))
-  (add-hook 'edbi:sql-mode-hook 'edbi:ac-edbi:sql-mode-hook)
-  (add-hook 'edbi:dbview-update-hook 'edbi:ac-editor-word-candidate-update)
-  (unless (memq 'edbi:sql-mode ac-modes)
-    (setq ac-modes
-          (cons 'edbi:sql-mode ac-modes))))
+(defun edbi:setup-completion-reset ()
+  "Clear completion settings."
+  ;; remove ac settings
+  (remove-hook 'edbi:sql-mode-hook 'edbi:ac-edbi:sql-mode-hook)
+  (delq 'edbi:sql-mode ac-modes)
+  )
 
+(defun edbi:setup-completion-auto-complete ()
+  "Initialization for auto-complete."
+  (when (eq 'auto-complete edbi:completion-tool) 
+    (ac-define-source edbi:tables
+      '((candidates . edbi:ac-editor-table-candidates)
+        (candidate-face . edbi:face-ac-table-candidate-face)
+        (selection-face . edbi:face-ac-table-selection-face)
+        (symbol . "T")))
+    (ac-define-source edbi:columns
+      '((candidates . edbi:ac-editor-column-candidates)
+        (candidate-face . edbi:face-ac-column-candidate-face)
+        (selection-face . edbi:face-ac-column-selection-face)
+        (symbol . "C")))
+    (ac-define-source edbi:types
+      '((candidates . edbi:ac-editor-type-candidates)
+        (candidate-face . edbi:face-ac-type-candidate-face)
+        (selection-face . edbi:face-ac-type-selection-face)
+        (symbol . "+")))
+    (ac-define-source edbi:keywords
+      '((candidates . edbi:ac-editor-keyword-candidates)
+        (symbol . "K")))
+    (add-hook 'edbi:sql-mode-hook 'edbi:ac-edbi:sql-mode-hook)
+    (unless (memq 'edbi:sql-mode ac-modes)
+      (setq ac-modes
+            (cons 'edbi:sql-mode ac-modes)))))
+
+(defun edbi:completion-at-point-function ()
+  "Abnormal hook function for `completion-at-point-functions'."
+  (lexical-let* ((end (point))
+         (beg (save-excursion
+                (skip-chars-backward "^ \n\r\t,:")
+                (point))))
+    (list beg end
+          (completion-table-dynamic
+           (lambda (prefix)
+             ;;(message "EDBI: (%i - %i) PREFIX: %s" beg end prefix)
+             (let ((ret (append (edbi:ac-editor-table-candidates)
+                                (edbi:ac-editor-column-candidates)
+                                (edbi:ac-editor-type-candidates)
+                                (edbi:ac-editor-keyword-candidates))))
+               (setq ret (mapcar (lambda (i)
+                                   (when (listp i) (setq i (car i)))
+                                   i) ret))
+               ret))))))
+    
 (defun edbi:ac-edbi:sql-mode-hook ()
   (make-local-variable 'ac-sources)
   (setq ac-sources '(ac-source-words-in-same-mode-buffers
@@ -2053,7 +2096,7 @@ If the region is active in the query buffer, the selected string is executed."
 
 (eval-after-load 'auto-complete
   '(progn
-     (edbi:setup-auto-complete)))
+     (edbi:setup-completion-auto-complete)))
 
 (edbi:dbd-init) ; init
 
