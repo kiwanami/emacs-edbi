@@ -1514,16 +1514,18 @@ If the region is active in the query buffer, the selected string is executed."
 
 (defun edbi:dbview-query-execute (conn sql result-buf)
   "[internal] Execute SQL and rendering results."
-  (lexical-let ((conn conn)
+  (lexical-let ((conn conn) (time-begin (float-time))
                 (sql sql) (result-buf result-buf))
     (cc:semaphore-with edbi:dbview-query-execute-semaphore
       (lambda (x)
+        (message "EDBI: Waiting for the query...")
         (deferred:$
           (edbi:seq
            (edbi:prepare-d conn sql)
            (edbi:execute-d conn nil)
            (lambda (exec-result)
-             (message "Result Code: %S" exec-result) ; for debug
+             (message "Result Code: %S  /  %.3f seconds"
+                      exec-result (- (float-time) time-begin))
              (cond
               ;; SELECT
               ((or (equal "0E0" exec-result)
